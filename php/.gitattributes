@@ -1,0 +1,6 @@
+# Keep tests out of the archive Composer downloads from the qsrv-php mirror.
+/tests                export-ignore
+/phpunit.xml.dist     export-ignore
+/.gitattributes       export-ignore
+/.gitignore           export-ignore
+/.github              export-ignore

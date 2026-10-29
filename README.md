@@ -132,8 +132,29 @@ Go SDK: `github.com/romycode/qsrv/pkg/client`.
 
 ## PHP and Symfony Messenger
 
-`composer require romycode/qsrv`: a PHP client and a Messenger transport
+`composer require romycode/qsrv-php`: a PHP client and a Messenger transport
 (`qsrv://KEY@host:8080/queue`). See [php/README.md](php/README.md).
+
+## Releases
+
+The server and the PHP package are versioned independently:
+
+| tag in this repo | releases |
+|---|---|
+| `v0.4.0` | Go server and module (`github.com/romycode/qsrv@v0.4.0`) |
+| `php/v0.2.0` | PHP package `romycode/qsrv-php` `v0.2.0` |
+
+`php/` is developed here and published to the read-only mirror
+[romycode/qsrv-php](https://github.com/romycode/qsrv-php), which Packagist
+reads, with your own git credentials (no CI secrets), from an up-to-date `main`:
+
+```sh
+scripts/release-php.sh v0.2.0   # tags php/v0.2.0 here and v0.2.0 on the mirror
+scripts/release-php.sh --sync   # only refresh the mirror's main
+```
+
+The script refuses to publish anything that is not `origin/main`, and never
+force-pushes the mirror.
 
 ## Metrics and alerts
 
