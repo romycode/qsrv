@@ -14,6 +14,9 @@ ORIGIN=${QSRV_ORIGIN:-origin}
 die() { echo "release-php: $*" >&2; exit 1; }
 
 [ $# -eq 1 ] || die "usage: $0 vX.Y.Z | --sync"
+if [ "$1" != "--sync" ]; then
+  [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "version must look like v1.2.3"
+fi
 cd "$(git rev-parse --show-toplevel)"
 
 # Only publish what is on origin/main: nothing local, nothing unmerged.
@@ -36,7 +39,6 @@ if [ "$1" = "--sync" ]; then
 fi
 
 version=$1
-[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "version must look like v1.2.3"
 tag="php/$version"
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   [ "$(git rev-parse "$tag^{commit}")" = "$head" ] || die "$tag already exists on another commit"
