@@ -19,6 +19,7 @@ use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
+use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
@@ -202,12 +203,27 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         $t->ack($env);
     }
 
-    public function testUndecodableMessageIsNacked(): void
+    public function testUndecodableMessage(): void
     {
         $q = $this->queueName();
         $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 3)));
         $this->client->send($q, '{"not":"a messenger envelope"}');
         $t = $this->transport($q);
+
+        if (method_exists(MessageDecodingFailedException::class, 'wrap')) {
+            // Messenger 8.1+: the serializer returns a stamped envelope and the
+            // worker handles it like any failure (retry / failure transport).
+            [$env] = self::all($t);
+            self::assertNotNull($env->last(MessageDecodingFailedStamp::class));
+            self::assertNotNull($env->last(QsrvReceivedStamp::class));
+            $t->reject($env);
+            self::assertSame(0, $this->client->getQueue($q)->stats->messages);
+
+            return;
+        }
+
+        // Messenger 7.4: decode() throws; the transport nacks so qsrv's retry
+        // policy / dead-letter queue deal with the poison message.
         try {
             self::all($t);
             self::fail('decoded garbage');

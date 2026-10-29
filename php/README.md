@@ -125,6 +125,13 @@ nack keeps it at the head of its group.
 
 Either way, processed messages stay in qsrv's history and can be replayed.
 
+### Messages that can't be decoded
+
+With Messenger 7.4 the transport nacks them, so qsrv's retry policy and
+dead-letter queue take care of them. With Messenger 8.1+ the serializer
+returns an envelope stamped `MessageDecodingFailedStamp` and the worker treats
+it like any failed message (retries, then `failure_transport`).
+
 ### Long handlers
 
 A received message is leased for the queue's `visibility_timeout`. If a
