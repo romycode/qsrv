@@ -1,0 +1,156 @@
+name: PHP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "php/**"
+      - "cmd/**"
+      - "internal/**"
+      - "pkg/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/actions/**"
+      - ".github/workflows/php.yml"
+  pull_request:
+    paths:
+      - "php/**"
+      - "cmd/**"
+      - "internal/**"
+      - "pkg/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/actions/**"
+      - ".github/workflows/php.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: php-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.27.x"
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+jobs:
+  php:
+    name: PHP ${{ matrix.php }} · Symfony ${{ matrix.symfony }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.4", "8.5"]
+        symfony: ["7.4", "8.1"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer
+      - name: composer validate
+        working-directory: php
+        run: composer validate --no-check-all --no-check-publish
+      - name: Install (Symfony ${{ matrix.symfony }}.*)
+        working-directory: php
+        env:
+          SF: ${{ matrix.symfony }}.*
+        run: |
+          composer update --prefer-dist --no-progress \
+            --with "symfony/http-client:$SF" --with "symfony/messenger:$SF" \
+            --with "symfony/serializer:$SF" --with "symfony/property-access:$SF"
+          composer show 'symfony/*' | grep -E 'messenger|http-client ' || true
+      - name: Start qsrv
+        run: |
+          CGO_ENABLED=0 go build -o bin/qsrv ./cmd/qsrv
+          key=$(openssl rand -hex 32)
+          echo "QSRV_TEST_API_KEY=$key" >> "$GITHUB_ENV"
+          echo "QSRV_TEST_URL=http://127.0.0.1:18080" >> "$GITHUB_ENV"
+          QSRV_API_KEYS=$key nohup bin/qsrv -addr 127.0.0.1:18080 -data-dir "$RUNNER_TEMP/qsrv" -metrics-addr "" -log-level warn > qsrv.log 2>&1 &
+          for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && exit 0; sleep 0.1; done
+          cat qsrv.log; exit 1
+      - name: PHPUnit (unit + integration against qsrv)
+        id: phpunit
+        run: |
+          # --fail-on-skipped: integration tests must run here, not be skipped.
+          if (cd php && vendor/bin/phpunit --fail-on-skipped --no-progress --colors=never) > phpunit.txt 2>&1; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat phpunit.txt
+      - name: Report
+        if: always()
+        env:
+          OK: ${{ steps.phpunit.outputs.ok }}
+          ID: php${{ matrix.php }}-sf${{ matrix.symfony }}
+        run: |
+          mkdir -p reports
+          summary=$(grep -E '^(OK|Tests:|FAILURES|ERRORS)' phpunit.txt 2>/dev/null | tail -1)
+          {
+            if [ "$OK" = "true" ]; then icon="✅"; else icon="❌"; fi
+            echo "#### $icon PHP ${{ matrix.php }} · Symfony ${{ matrix.symfony }}"
+            echo
+            echo "${summary:-PHPUnit did not run}"
+            echo
+            if [ "$OK" != "true" ]; then
+              echo '<details><summary>PHPUnit output</summary>'
+              echo
+              echo '```'
+              tail -n 80 phpunit.txt 2>/dev/null
+              echo '```'
+              echo '</details>'
+              echo
+            fi
+          } > "reports/25-$ID.md"
+          cat "reports/25-$ID.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-php${{ matrix.php }}-sf${{ matrix.symfony }}
+          path: reports/
+      - name: Fail on test failures
+        if: steps.phpunit.outputs.ok != 'true'
+        run: |
+          echo "::error::PHPUnit failed"; cat qsrv.log; exit 1
+
+  report:
+    name: PR report
+    needs: [php]
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: report-*
+          path: reports
+          merge-multiple: true
+      - name: Build comment
+        env:
+          PHP: ${{ needs.php.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          icon() { case "$1" in success) echo "✅";; failure) echo "❌";; cancelled) echo "⏹️";; *) echo "⚪";; esac; }
+          {
+            echo "### PHP CI for \`${HEAD_SHA:0:7}\`"
+            echo
+            echo "$(icon "$PHP") PHPUnit · [run]($RUN_URL)"
+            echo
+            cat reports/*.md 2>/dev/null
+          } > comment.md
+      - uses: ./.github/actions/pr-comment
+        with:
+          marker: qsrv-ci:php
+          file: comment.md

@@ -1,0 +1,29 @@
+name: Sticky PR comment
+description: Creates or updates one bot comment per marker on the current PR.
+inputs:
+  marker:
+    description: Unique id for this comment (one per workflow).
+    required: true
+  file:
+    description: Markdown file with the comment body.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@v9
+      env:
+        MARKER: "<!-- ${{ inputs.marker }} -->"
+        FILE: ${{ inputs.file }}
+      with:
+        script: |
+          const marker = process.env.MARKER;
+          const body = marker + '\n' + require('fs').readFileSync(process.env.FILE, 'utf8');
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+          const mine = comments.find(c => c.user.type === 'Bot' && c.body.startsWith(marker));
+          if (mine) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }

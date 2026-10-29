@@ -13,7 +13,10 @@ Tests share a cache of SQLite compiled from WASM (`$XDG_CACHE_HOME/qsrv-test`,
 keyed by `go.sum`); without it every test binary recompiles SQLite (~1.5s, or
 ~15s under `-race`). Override with `QSRV_WASM_CACHE_DIR`.
 
-PHP: see [php/README.md](../php/README.md#tests). Examples: [examples/](../examples).
+PHP: see [php/README.md](../php/README.md#tests).
+
+`examples/` is documentation: CI doesn't run it. Run it by hand against a
+local qsrv when you change it (each file says how).
 
 ## Benchmarks
 
@@ -50,31 +53,28 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push to `main` and every PR:
+One workflow per area, each triggered only when its files change (GitHub
+`paths` filters), on PRs and on pushes to `main`:
 
-- **Lint & build**: gofmt, `go vet` (both drivers), `go mod verify`,
-  static cross-builds for linux/amd64, linux/arm64 and darwin/arm64.
-- **Tests**: `go test -race` with the WASM driver and with the cgo driver;
-  coverage (`-coverpkg=./...`) on the WASM run, compared with the PR base.
-- **PHP**: unit tests plus integration tests against a real qsrv, for PHP
-  8.4 and 8.5 × Symfony 7.4 and 8.1.
-- **Examples**: runs `examples/go` and `examples/php` against a real qsrv, so
-  the documented examples keep working.
-- **Conventional Commits** (PRs): every commit and the PR title.
+| workflow | runs when these change | what it does |
+|---|---|---|
+| `go.yml` | `**.go` (except `examples/`), `go.mod`, `go.sum`, `.github/ci/`, `.github/actions/` | gofmt, `go vet` (both drivers), `go mod verify`, static cross-builds; `go test -race` with the WASM and cgo drivers; coverage vs the PR base; benchmarks (base vs head with `benchstat`) and a `qbench` load test |
+| `php.yml` | `php/`, Go server code (`cmd/`, `internal/`, `pkg/`, `go.mod`, `go.sum`) | PHPUnit, unit and integration against a real qsrv, PHP 8.4/8.5 × Symfony 7.4/8.1 |
+| `docker.yml` | `Dockerfile`, `.dockerignore`, Go server code; every `v*` tag | builds amd64+arm64, smoke-tests the image; pushes to GHCR from `main` and tags |
+| `commits.yml` | every PR (also on title edits) | Conventional Commits: each commit and the PR title |
 
-`.github/workflows/docker.yml` builds the image for amd64 and arm64 on every
-PR (with a smoke test of the amd64 image: healthy, then send/receive/ack with
-`qctl` inside it), and pushes it to GHCR on `main` (`edge`) and on `vX.Y.Z`
-tags.
-- **Performance**: the Go benchmarks, base vs head interleaved 6 times on
-  the same runner and compared with `benchstat`, plus a `qbench` load test
-  against a real server.
-- **PR report**: one comment per PR, updated on each push, with test
-  results, coverage per package (with delta) and performance. The same
-  content goes to each run's job summary.
+PHP also runs on server changes because its integration tests run against
+the server. Each workflow edits its own file, so changing a workflow runs it.
+A docs-only PR runs only `commits.yml`.
 
-Benchmarks report, they never fail the build: CI runners share disks and
-fsync timing is noisy.
+`go.yml` and `php.yml` keep one comment each on the PR, updated on every run,
+with their results (tests, coverage with delta, performance; PHPUnit per
+version). The same content goes to the run's job summary. Benchmarks report,
+they never fail the build: CI runners share disks and fsync timing is noisy.
+
+If you make checks required in branch protection, require only `commits.yml`
+(or use a ruleset with "skip if not run"): a workflow skipped by its path
+filter never reports, and a required check would wait forever.
 
 ## Commits
 

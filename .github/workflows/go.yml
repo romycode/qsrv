@@ -1,15 +1,31 @@
-name: CI
+name: Go
 
 on:
   push:
     branches: [main]
+    paths:
+      - "**.go"
+      - "!examples/**" # documentation only
+      - "go.mod"
+      - "go.sum"
+      - ".github/ci/**"
+      - ".github/actions/**"
+      - ".github/workflows/go.yml"
   pull_request:
+    paths:
+      - "**.go"
+      - "!examples/**" # documentation only
+      - "go.mod"
+      - "go.sum"
+      - ".github/ci/**"
+      - ".github/actions/**"
+      - ".github/workflows/go.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: go-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -41,24 +57,6 @@ jobs:
             GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -o /dev/null ./cmd/...
             echo "built $target"
           done
-
-  commits:
-    name: Conventional Commits
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: PR title and commits
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          # The title becomes the commit subject on squash merges.
-          scripts/check-commit-msg.sh --subject "$TITLE"
-          scripts/check-commit-msg.sh --range "$BASE..$HEAD"
 
   test:
     name: Tests (${{ matrix.name }})
@@ -145,123 +143,6 @@ jobs:
         run: |
           echo "::error::tests failed (see the job summary or the PR comment)"
           exit 1
-
-  php:
-    name: PHP ${{ matrix.php }} · Symfony ${{ matrix.symfony }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        php: ["8.4", "8.5"]
-        symfony: ["7.4", "8.1"]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          check-latest: true
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php }}
-          coverage: none
-          tools: composer
-      - name: composer validate
-        working-directory: php
-        run: composer validate --no-check-all --no-check-publish
-      - name: Install (Symfony ${{ matrix.symfony }}.*)
-        working-directory: php
-        env:
-          SF: ${{ matrix.symfony }}.*
-        run: |
-          composer update --prefer-dist --no-progress \
-            --with "symfony/http-client:$SF" --with "symfony/messenger:$SF" \
-            --with "symfony/serializer:$SF" --with "symfony/property-access:$SF"
-          composer show 'symfony/*' | grep -E 'messenger|http-client ' || true
-      - name: Start qsrv
-        run: |
-          CGO_ENABLED=0 go build -o bin/qsrv ./cmd/qsrv
-          key=$(openssl rand -hex 32)
-          echo "QSRV_TEST_API_KEY=$key" >> "$GITHUB_ENV"
-          echo "QSRV_TEST_URL=http://127.0.0.1:18080" >> "$GITHUB_ENV"
-          QSRV_API_KEYS=$key nohup bin/qsrv -addr 127.0.0.1:18080 -data-dir "$RUNNER_TEMP/qsrv" -metrics-addr "" -log-level warn > qsrv.log 2>&1 &
-          for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && exit 0; sleep 0.1; done
-          cat qsrv.log; exit 1
-      - name: PHPUnit (unit + integration against qsrv)
-        id: phpunit
-        run: |
-          # --fail-on-skipped: integration tests must run here, not be skipped.
-          if (cd php && vendor/bin/phpunit --fail-on-skipped --no-progress --colors=never) > phpunit.txt 2>&1; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          fi
-          cat phpunit.txt
-      - name: Report
-        if: always()
-        env:
-          OK: ${{ steps.phpunit.outputs.ok }}
-          ID: php${{ matrix.php }}-sf${{ matrix.symfony }}
-        run: |
-          mkdir -p reports
-          summary=$(grep -E '^(OK|Tests:|FAILURES|ERRORS)' phpunit.txt 2>/dev/null | tail -1)
-          {
-            if [ "$OK" = "true" ]; then icon="✅"; else icon="❌"; fi
-            echo "#### $icon PHP ${{ matrix.php }} · Symfony ${{ matrix.symfony }}"
-            echo
-            echo "${summary:-PHPUnit did not run}"
-            echo
-            if [ "$OK" != "true" ]; then
-              echo '<details><summary>PHPUnit output</summary>'
-              echo
-              echo '```'
-              tail -n 80 phpunit.txt 2>/dev/null
-              echo '```'
-              echo '</details>'
-              echo
-            fi
-          } > "reports/25-$ID.md"
-          cat "reports/25-$ID.md" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: report-php${{ matrix.php }}-sf${{ matrix.symfony }}
-          path: reports/
-      - name: Fail on test failures
-        if: steps.phpunit.outputs.ok != 'true'
-        run: |
-          echo "::error::PHPUnit failed"; cat qsrv.log; exit 1
-
-  examples:
-    name: Examples
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          check-latest: true
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.4"
-          coverage: none
-          tools: composer
-      - name: Start qsrv
-        run: |
-          CGO_ENABLED=0 go build -o bin/qsrv ./cmd/qsrv
-          key=$(openssl rand -hex 32)
-          echo "QSRV_API_KEY=$key" >> "$GITHUB_ENV"
-          echo "QSRV_ADDR=http://127.0.0.1:18080" >> "$GITHUB_ENV"
-          QSRV_API_KEYS=$key nohup bin/qsrv -addr 127.0.0.1:18080 -data-dir "$RUNNER_TEMP/qsrv" -metrics-addr "" -log-level warn > qsrv.log 2>&1 &
-          for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && exit 0; sleep 0.1; done
-          cat qsrv.log; exit 1
-      - name: Go example
-        run: go run ./examples/go
-      - name: PHP examples
-        working-directory: examples/php
-        run: |
-          composer install --no-progress
-          php client.php
-          php messenger.php
 
   bench:
     name: Performance
@@ -371,12 +252,15 @@ jobs:
 
   report:
     name: PR report
-    needs: [lint, test, php, examples, bench]
+    needs: [lint, test, bench]
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
       - uses: actions/download-artifact@v8
         with:
           pattern: report-*
@@ -386,33 +270,19 @@ jobs:
         env:
           LINT: ${{ needs.lint.result }}
           TEST: ${{ needs.test.result }}
-          PHP: ${{ needs.php.result }}
-          EXAMPLES: ${{ needs.examples.result }}
           BENCH: ${{ needs.bench.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           icon() { case "$1" in success) echo "✅";; failure) echo "❌";; cancelled) echo "⏹️";; *) echo "⚪";; esac; }
           {
-            echo "<!-- qsrv-ci-report -->"
-            echo "### CI report for \`${HEAD_SHA:0:7}\`"
+            echo "### Go CI for \`${HEAD_SHA:0:7}\`"
             echo
-            echo "$(icon "$LINT") lint & build · $(icon "$TEST") tests · $(icon "$PHP") php · $(icon "$EXAMPLES") examples · $(icon "$BENCH") performance · [run]($RUN_URL)"
+            echo "$(icon "$LINT") lint & build · $(icon "$TEST") tests · $(icon "$BENCH") performance · [run]($RUN_URL)"
             echo
             cat reports/*.md 2>/dev/null
           } > comment.md
-      - name: Upsert PR comment
-        uses: actions/github-script@v9
+      - uses: ./.github/actions/pr-comment
         with:
-          script: |
-            const body = require('fs').readFileSync('comment.md', 'utf8');
-            const marker = '<!-- qsrv-ci-report -->';
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
-            const mine = comments.find(c => c.user.type === 'Bot' && c.body.startsWith(marker));
-            if (mine) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }
+          marker: qsrv-ci:go
+          file: comment.md
