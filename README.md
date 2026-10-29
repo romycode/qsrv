@@ -135,6 +135,17 @@ Go SDK: `github.com/romycode/qsrv/pkg/client`.
 `composer require romycode/qsrv-php`: a PHP client and a Messenger transport
 (`qsrv://KEY@host:8080/queue`). See [php/README.md](php/README.md).
 
+## Commits
+
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+`type(scope)!: description`, types `feat fix docs style refactor perf test
+build ci chore revert`, scopes like `queue`, `httpapi`, `php`, `ci`. CI checks
+every PR commit and the PR title (the subject of a squash merge). Locally:
+
+```sh
+git config core.hooksPath .githooks   # rejects non-conforming messages on commit
+```
+
 ## Releases
 
 The server and the PHP package are versioned independently:
