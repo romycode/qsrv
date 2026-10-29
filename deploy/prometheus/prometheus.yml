@@ -1,0 +1,14 @@
+# Minimal Prometheus config for qsrv. The metrics endpoint has no auth:
+# bind it to localhost (default) and run Prometheus/agent on the same host,
+# or bind to a private IP and restrict it with a security group.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: qsrv
+    static_configs:
+      - targets: ["127.0.0.1:9464"]

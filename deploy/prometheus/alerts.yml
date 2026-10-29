@@ -1,0 +1,183 @@
+# qsrv alerting rules. Thresholds are tuned for a low-volume service
+# (~50k msgs/day); adjust the numbers marked TUNE to your traffic and SLOs.
+# Assumes the scrape job is named "qsrv".
+groups:
+  - name: qsrv.recording
+    rules:
+      # 1 for every queue that is used as a dead letter queue (count by: several
+      # sources may share one DLQ, which would otherwise yield duplicate series).
+      - record: qsrv:dlq:is_dlq
+        expr: |
+          count by (queue) (
+            label_replace(qsrv_queue_info{dead_letter_queue!=""}, "queue", "$1", "dead_letter_queue", "(.+)")
+          ) > bool 0
+
+  - name: qsrv.availability
+    rules:
+      - alert: QsrvDown
+        expr: up{job="qsrv"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "qsrv is down ({{ $labels.instance }})"
+          description: "Prometheus cannot scrape qsrv. Producers and consumers are failing."
+
+      - alert: QsrvRestartLoop
+        expr: changes(qsrv_start_time_seconds[30m]) > 2
+        labels: {severity: critical}
+        annotations:
+          summary: "qsrv restarted {{ $value }} times in 30m"
+          description: "Likely a crash loop (fatal storage error: disk full, I/O errors). Check logs for 'fatal storage error'."
+
+      - alert: QsrvHTTP5xx
+        expr: |
+          sum(rate(qsrv_http_requests_total{code=~"5..", code!="503"}[5m]))
+            / sum(rate(qsrv_http_requests_total[5m])) > 0.01
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "qsrv 5xx ratio {{ $value | humanizePercentage }}"
+          description: "Internal errors (503 during shutdown excluded)."
+
+  - name: qsrv.queues
+    rules:
+      # The single most useful alert: something is not being processed.
+      - alert: QsrvMessagesTooOld
+        expr: |
+          qsrv_queue_oldest_message_age_seconds > 600 # TUNE
+          unless on (queue) qsrv:dlq:is_dlq
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.queue }}: oldest message is {{ $value | humanizeDuration }} old"
+          description: "Consumers are slow, stopped, or a group is blocked by a message that keeps failing."
+
+      - alert: QsrvMessagesTooOldCritical
+        expr: |
+          qsrv_queue_oldest_message_age_seconds > 3600 # TUNE
+          unless on (queue) qsrv:dlq:is_dlq
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.queue }}: oldest message is {{ $value | humanizeDuration }} old"
+
+      - alert: QsrvNoConsumers
+        expr: |
+          sum by (queue) (qsrv_queue_messages{state="ready"}) > 0
+          unless on (queue) sum by (queue) (rate(qsrv_messages_total{event="delivered"}[10m])) > 0
+          unless on (queue) qsrv:dlq:is_dlq
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.queue }}: {{ $value }} ready messages and no deliveries in 10m"
+          description: "No consumer is polling this queue."
+
+      - alert: QsrvDeadLetters
+        expr: sum by (queue, event) (increase(qsrv_messages_total{event=~"dead_lettered|dropped"}[15m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.queue }}: {{ $value | humanize }} messages {{ $labels.event }} in 15m"
+          description: "Messages exhausted their retries. dropped = no DLQ configured; they are only in history (replayable)."
+
+      - alert: QsrvDLQNotEmpty
+        expr: |
+          sum by (queue) (qsrv_queue_messages) > 0
+          and on (queue) qsrv:dlq:is_dlq
+        for: 1h # TUNE
+        labels: {severity: info}
+        annotations:
+          summary: "DLQ {{ $labels.queue }} has {{ $value }} unprocessed messages for over 1h"
+          description: "Inspect, fix the cause and reprocess or ack them."
+
+      - alert: QsrvHighRedeliveryRatio
+        expr: |
+          sum by (queue) (rate(qsrv_messages_total{event="redelivered"}[15m]))
+            / sum by (queue) (rate(qsrv_messages_total{event="delivered"}[15m])) > 0.2 # TUNE
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.queue }}: {{ $value | humanizePercentage }} of deliveries are retries"
+          description: "Consumers are failing (nack) or timing out (expired). Check qsrv_messages_total by event."
+
+      - alert: QsrvLeaseExpiries
+        expr: sum by (queue) (increase(qsrv_messages_total{event="expired"}[15m])) > 5 # TUNE
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.queue }}: {{ $value | humanize }} leases expired in 15m"
+          description: "Consumers crash mid-message or visibility_timeout is shorter than processing time (use extend/heartbeat)."
+
+      - alert: QsrvQueueNearFull
+        expr: |
+          sum by (queue) (qsrv_queue_messages)
+            / on (queue) qsrv_queue_max_messages > 0.8
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.queue }} at {{ $value | humanizePercentage }} of max_messages"
+
+      - alert: QsrvSendsRejected
+        expr: sum by (route) (rate(qsrv_http_requests_total{code="429"}[5m])) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "qsrv rejecting requests with 429 (queue full)"
+          description: "Producers are losing messages unless they retry."
+
+  - name: qsrv.storage
+    rules:
+      - alert: QsrvDiskSpaceLow
+        expr: qsrv_disk_free_bytes / qsrv_disk_size_bytes < 0.15
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "qsrv data disk {{ $value | humanizePercentage }} free"
+          description: "When full, commits fail and qsrv exits. Lower retention, purge history or grow the EBS volume."
+
+      - alert: QsrvDiskSpaceCritical
+        expr: qsrv_disk_free_bytes / qsrv_disk_size_bytes < 0.05
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "qsrv data disk {{ $value | humanizePercentage }} free"
+
+      - alert: QsrvDiskWillFill
+        expr: predict_linear(qsrv_disk_free_bytes[6h], 3 * 24 * 3600) < 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "qsrv data disk will fill within 3 days at the current rate"
+
+      - alert: QsrvSlowCommits
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(qsrv_store_commit_duration_seconds_bucket[5m]))) > 0.1 # TUNE
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "qsrv p99 commit latency {{ $value | humanizeDuration }}"
+          description: "Disk (EBS) is slow or throttled. Every send/receive/ack waits for commits. Check EBS VolumeQueueLength / burst balance."
+
+      - alert: QsrvWriterBacklog
+        expr: qsrv_store_pending_writes > 500 # TUNE
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} writes waiting for the disk"
+
+      - alert: QsrvWALGrowing
+        expr: qsrv_db_size_bytes{file="wal"} > 1e9
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "SQLite WAL is {{ $value | humanize1024 }}B"
+          description: "Checkpoints are not keeping up (a long-running reader, e.g. a big replay or a backup tool holding a read transaction)."
+
+  - name: qsrv.process
+    rules:
+      - alert: QsrvMemoryHigh
+        expr: qsrv_process_resident_memory_bytes > 1.5e9 # TUNE to instance size
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "qsrv RSS {{ $value | humanize1024 }}B"
+          description: "Live message metadata is kept in RAM; a huge backlog or replay grows memory."
