@@ -63,6 +63,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
+      # SQLite compiled from WASM to native code; compiling it under -race
+      # takes ~15s per test binary. Keyed by go.sum like the test helper.
+      - uses: actions/cache@v6
+        if: matrix.id == 'wasm'
+        with:
+          path: ~/.cache/qsrv-test
+          key: qsrv-wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}
 
       - name: go test -race
         id: test
@@ -156,20 +163,24 @@ jobs:
       - name: Load test over HTTP (qbench)
         run: |
           CGO_ENABLED=0 go build -o bin/ ./cmd/qsrv ./cmd/qbench
-          export QSRV_API_KEYS=$(openssl rand -hex 32) QSRV_API_KEY="$QSRV_API_KEYS"
-          export QSRV_ADDR=http://127.0.0.1:18080
+          # Two statements on purpose: in `export A=x B=$A`, $A expands before A is set.
+          export QSRV_API_KEYS=$(openssl rand -hex 32)
+          export QSRV_API_KEY="$QSRV_API_KEYS" QSRV_ADDR=http://127.0.0.1:18080
           data=$(mktemp -d)
-          bin/qsrv -addr 127.0.0.1:18080 -data-dir "$data" -metrics-addr "" -log-level warn &
+          bin/qsrv -addr 127.0.0.1:18080 -data-dir "$data" -metrics-addr "" -log-level warn 2> qsrv.log &
           pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
           for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && break; sleep 0.1; done
-          {
-            echo "## max throughput: 16 producers / 16 consumers, 1 KiB, 20s"
-            bin/qbench -producers 16 -consumers 16 -size 1024 -duration 20s
+          curl -sf http://127.0.0.1:18080/healthz >/dev/null || { echo "qsrv did not start"; cat qsrv.log; exit 1; }
+          run() {
+            echo "## $1"
+            shift
+            if ! bin/qbench "$@" 2>&1; then echo "QBENCH FAILED"; return 1; fi
             echo
-            echo "## fixed load: 50 msg/s (≈ 4.3M/day), 1 KiB, 20s"
-            bin/qbench -rate 50 -size 1024 -duration 20s
-          } | tee qbench.txt
-          kill "$pid"; wait "$pid" || true
+          }
+          : > qbench.txt
+          run "max throughput: 8 producers / 16 consumers, 1 KiB, 20s" -producers 8 -consumers 16 -size 1024 -duration 20s | tee -a qbench.txt
+          run "steady load: 50 msg/s, 1 KiB, 20 ordering groups, 20s" -rate 50 -groups 20 -size 1024 -duration 20s | tee -a qbench.txt
 
       - name: Report
         if: always()

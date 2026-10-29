@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -23,14 +24,19 @@ import (
 var configureOnce sync.Once
 
 // configureDriver persists wazero's native compilation of SQLite under
-// dataDir/.wasmcache: first start ~1s, later starts ~tens of ms. Must run
-// before the first connection is opened; only the first call has effect.
+// dataDir/.wasmcache (or $QSRV_WASM_CACHE_DIR): first start ~1s, later starts
+// ~tens of ms. Must run before the first connection is opened; only the
+// first call has effect.
 func configureDriver(dataDir string) {
 	configureOnce.Do(func() {
 		cfg := wazero.NewRuntimeConfig().
 			WithMemoryLimitPages(4096). // 256MB per connection, ncruces' 64-bit default
 			WithCoreFeatures(api.CoreFeaturesV2)
-		cache, err := wazero.NewCompilationCacheWithDir(filepath.Join(dataDir, ".wasmcache"))
+		dir := os.Getenv(WasmCacheEnv)
+		if dir == "" {
+			dir = filepath.Join(dataDir, ".wasmcache")
+		}
+		cache, err := wazero.NewCompilationCacheWithDir(dir)
 		if err != nil {
 			slog.Warn("wasm compilation cache disabled", "err", err)
 		} else {
