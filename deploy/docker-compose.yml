@@ -1,0 +1,19 @@
+# Single qsrv with a persistent volume. Generate a key first:
+#   echo "QSRV_API_KEYS=$(openssl rand -hex 32)" > .env
+#   docker compose -f deploy/docker-compose.yml up -d
+services:
+  qsrv:
+    image: ghcr.io/romycode/qsrv:latest
+    restart: unless-stopped
+    environment:
+      QSRV_API_KEYS: ${QSRV_API_KEYS:?set QSRV_API_KEYS in .env}
+      QSRV_LOG_LEVEL: info
+    ports:
+      - "8080:8080"
+      - "127.0.0.1:9464:9464"   # metrics: no auth, keep them private
+    volumes:
+      - qsrv-data:/data
+    stop_grace_period: 30s      # let pending writes commit on SIGTERM
+
+volumes:
+  qsrv-data:

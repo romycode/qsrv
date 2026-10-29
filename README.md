@@ -31,6 +31,12 @@ qctl recv -wait 20s orders                               # prints the message an
 qctl ack orders <lease>
 ```
 
+With Docker:
+
+```sh
+docker run -d -p 8080:8080 -e QSRV_API_KEYS=$QSRV_API_KEYS -v qsrv-data:/data ghcr.io/romycode/qsrv:latest
+```
+
 Or over plain HTTP:
 
 ```sh
@@ -113,6 +119,6 @@ running jobs finish. `qctl <command> -h` lists each command's flags.
 |---|---|
 | [Concepts](docs/concepts.md) | leases, retries and DLQs, ordering groups, delays, replay, guarantees |
 | [HTTP API](docs/api.md) | every endpoint, request and response, error codes |
-| [Operations](docs/operations.md) | configuration, backups, metrics and alerts, performance and sizing |
+| [Operations](docs/operations.md) | configuration, Docker, backups, metrics and alerts, performance and sizing |
 | [PHP](php/README.md) | client, Messenger transport, retries with Messenger vs qsrv |
 | [Development](docs/development.md) | tests, benchmarks, CI, commits, releases, internals |

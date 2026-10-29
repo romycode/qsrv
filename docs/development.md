@@ -61,6 +61,11 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
 - **Examples**: runs `examples/go` and `examples/php` against a real qsrv, so
   the documented examples keep working.
 - **Conventional Commits** (PRs): every commit and the PR title.
+
+`.github/workflows/docker.yml` builds the image for amd64 and arm64 on every
+PR (with a smoke test of the amd64 image: healthy, then send/receive/ack with
+`qctl` inside it), and pushes it to GHCR on `main` (`edge`) and on `vX.Y.Z`
+tags.
 - **Performance**: the Go benchmarks, base vs head interleaved 6 times on
   the same runner and compared with `benchstat`, plus a `qbench` load test
   against a real server.
@@ -88,7 +93,7 @@ The server and the PHP package are versioned independently:
 
 | tag in this repo | releases |
 |---|---|
-| `v0.4.0` | Go server and module (`github.com/romycode/qsrv@v0.4.0`) |
+| `v0.4.0` | Go server and module (`github.com/romycode/qsrv@v0.4.0`) and Docker image `ghcr.io/romycode/qsrv:0.4.0` |
 | `php/v0.2.0` | PHP package `romycode/qsrv-php` `v0.2.0` |
 
 `php/` is developed here and published to the read-only mirror
