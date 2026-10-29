@@ -223,7 +223,7 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
   static cross-builds for linux/amd64, linux/arm64 and darwin/arm64.
 - **Tests**: `go test -race` with the WASM driver and with the cgo driver;
   coverage (`-coverpkg=./...`) on the WASM run, compared with the PR base.
-- **Performance**: the Go benchmarks, base vs head interleaved 5 times on
+- **Performance**: the Go benchmarks, base vs head interleaved 6 times on
   the same runner and compared with `benchstat`, plus a `qbench` load test
   against a real server.
 - **PR report**: one comment per PR, updated on each push, with test
