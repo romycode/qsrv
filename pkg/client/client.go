@@ -140,6 +140,59 @@ func (c *Client) Replay(ctx context.Context, queue string, req api.ReplayRequest
 	return out, err
 }
 
+// --- topics ---
+
+func tpath(topic, suffix string) string { return "/v1/topics/" + url.PathEscape(topic) + suffix }
+
+func (c *Client) ListTopics(ctx context.Context) ([]api.Topic, error) {
+	var out api.TopicList
+	err := c.do(ctx, http.MethodGet, "/v1/topics", nil, &out)
+	return out.Topics, err
+}
+
+// CreateTopic creates a topic subscribed to queues (may be empty).
+func (c *Client) CreateTopic(ctx context.Context, name string, queues ...string) (api.Topic, error) {
+	var out api.Topic
+	err := c.do(ctx, http.MethodPut, tpath(name, ""), api.TopicRequest{Queues: queues}, &out)
+	return out, err
+}
+
+func (c *Client) GetTopic(ctx context.Context, name string) (api.Topic, error) {
+	var out api.Topic
+	err := c.do(ctx, http.MethodGet, tpath(name, ""), nil, &out)
+	return out, err
+}
+
+// DeleteTopic removes the topic; its queues and their messages stay.
+func (c *Client) DeleteTopic(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, tpath(name, ""), nil, nil)
+}
+
+// Subscribe makes queue receive a copy of every message published to topic
+// from now on. Idempotent.
+func (c *Client) Subscribe(ctx context.Context, topic, queue string) (api.Topic, error) {
+	var out api.Topic
+	err := c.do(ctx, http.MethodPut, tpath(topic, "/subscriptions/"+url.PathEscape(queue)), nil, &out)
+	return out, err
+}
+
+// Unsubscribe stops copies to queue. Idempotent; queued messages stay.
+func (c *Client) Unsubscribe(ctx context.Context, topic, queue string) (api.Topic, error) {
+	var out api.Topic
+	err := c.do(ctx, http.MethodDelete, tpath(topic, "/subscriptions/"+url.PathEscape(queue)), nil, &out)
+	return out, err
+}
+
+// Publish inserts a copy of body into every queue subscribed to topic, in one
+// transaction: all of them get it or none does.
+func (c *Client) Publish(ctx context.Context, topic string, body []byte, o SendOptions) ([]api.PublishedMessage, error) {
+	text, raw := api.EncodeBody(body)
+	var out api.PublishResponse
+	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay)}
+	err := c.do(ctx, http.MethodPost, tpath(topic, "/messages"), in, &out)
+	return out.Messages, err
+}
+
 func qpath(queue, suffix string) string { return "/v1/queues/" + url.PathEscape(queue) + suffix }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {

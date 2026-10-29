@@ -46,6 +46,13 @@ func New(b *queue.Broker, o Options) http.Handler {
 	mux.HandleFunc("POST /v1/queues/{name}/leases/{lease}/nack", s.nack)
 	mux.HandleFunc("POST /v1/queues/{name}/leases/{lease}/extend", s.extend)
 	mux.HandleFunc("POST /v1/queues/{name}/replay", s.replay)
+	mux.HandleFunc("GET /v1/topics", s.listTopics)
+	mux.HandleFunc("PUT /v1/topics/{topic}", s.createTopic)
+	mux.HandleFunc("GET /v1/topics/{topic}", s.getTopic)
+	mux.HandleFunc("DELETE /v1/topics/{topic}", s.deleteTopic)
+	mux.HandleFunc("PUT /v1/topics/{topic}/subscriptions/{queue}", s.subscribe)
+	mux.HandleFunc("DELETE /v1/topics/{topic}/subscriptions/{queue}", s.unsubscribe)
+	mux.HandleFunc("POST /v1/topics/{topic}/messages", s.publish)
 
 	var h http.Handler = mux
 	if o.Auth != nil {
@@ -148,26 +155,8 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var in api.SendRequest
-	if !s.decode(w, r, &in, s.maxFrame) {
-		return
-	}
-	var body []byte
-	switch {
-	case in.Body != nil && in.BodyBase64 != nil:
-		writeAPIErr(w, http.StatusBadRequest, api.CodeBadRequest, "set either body or body_base64, not both")
-		return
-	case in.Body != nil:
-		body = []byte(*in.Body)
-	default:
-		body = in.BodyBase64
-	}
-	if int64(len(body)) > s.maxBody {
-		writeAPIErr(w, http.StatusRequestEntityTooLarge, api.CodeBadRequest, "message too large")
-		return
-	}
-	if d := in.Delay.D(); d < 0 || d > queue.MaxSendDelay {
-		writeAPIErr(w, http.StatusBadRequest, api.CodeBadRequest, fmt.Sprintf("delay must be between 0 and %s", queue.MaxSendDelay))
+	in, body, ok := s.readSend(w, r)
+	if !ok {
 		return
 	}
 	m, err := q.SendDelayed(body, in.GroupID, in.Delay.D())
@@ -176,6 +165,109 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, toAPIMessage(m))
+}
+
+// readSend decodes and validates a send/publish request.
+func (s *Server) readSend(w http.ResponseWriter, r *http.Request) (api.SendRequest, []byte, bool) {
+	var in api.SendRequest
+	if !s.decode(w, r, &in, s.maxFrame) {
+		return in, nil, false
+	}
+	var body []byte
+	switch {
+	case in.Body != nil && in.BodyBase64 != nil:
+		writeAPIErr(w, http.StatusBadRequest, api.CodeBadRequest, "set either body or body_base64, not both")
+		return in, nil, false
+	case in.Body != nil:
+		body = []byte(*in.Body)
+	default:
+		body = in.BodyBase64
+	}
+	if int64(len(body)) > s.maxBody {
+		writeAPIErr(w, http.StatusRequestEntityTooLarge, api.CodeBadRequest, "message too large")
+		return in, nil, false
+	}
+	if d := in.Delay.D(); d < 0 || d > queue.MaxSendDelay {
+		writeAPIErr(w, http.StatusBadRequest, api.CodeBadRequest, fmt.Sprintf("delay must be between 0 and %s", queue.MaxSendDelay))
+		return in, nil, false
+	}
+	return in, body, true
+}
+
+// --- topics ---
+
+func toAPITopic(t queue.Topic) api.Topic { return api.Topic{Name: t.Name, Queues: t.Queues} }
+
+func (s *Server) listTopics(w http.ResponseWriter, _ *http.Request) {
+	out := api.TopicList{Topics: []api.Topic{}}
+	for _, t := range s.b.Topics() {
+		out.Topics = append(out.Topics, toAPITopic(t))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) createTopic(w http.ResponseWriter, r *http.Request) {
+	var in api.TopicRequest
+	if !s.decode(w, r, &in, 64<<10) {
+		return
+	}
+	t, err := s.b.CreateTopic(r.PathValue("topic"), in.Queues)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toAPITopic(t))
+}
+
+func (s *Server) getTopic(w http.ResponseWriter, r *http.Request) {
+	t, err := s.b.GetTopic(r.PathValue("topic"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPITopic(t))
+}
+
+func (s *Server) deleteTopic(w http.ResponseWriter, r *http.Request) {
+	if err := s.b.DeleteTopic(r.PathValue("topic")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
+	s.subscription(w, r, s.b.Subscribe)
+}
+
+func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
+	s.subscription(w, r, s.b.Unsubscribe)
+}
+
+func (s *Server) subscription(w http.ResponseWriter, r *http.Request, fn func(topic, queue string) (queue.Topic, error)) {
+	t, err := fn(r.PathValue("topic"), r.PathValue("queue"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPITopic(t))
+}
+
+func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
+	in, body, ok := s.readSend(w, r)
+	if !ok {
+		return
+	}
+	pub, err := s.b.Publish(r.PathValue("topic"), body, in.GroupID, in.Delay.D())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out := api.PublishResponse{Messages: make([]api.PublishedMessage, len(pub))}
+	for i, p := range pub {
+		out.Messages[i] = api.PublishedMessage{Queue: p.Queue, Message: toAPIMessage(p.Message)}
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
@@ -292,11 +384,11 @@ func (s *Server) decode(w http.ResponseWriter, r *http.Request, v any, limit int
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, queue.ErrQueueNotFound):
+	case errors.Is(err, queue.ErrQueueNotFound), errors.Is(err, queue.ErrTopicNotFound):
 		writeAPIErr(w, http.StatusNotFound, api.CodeNotFound, err.Error())
 	case errors.Is(err, queue.ErrLeaseNotFound):
 		writeAPIErr(w, http.StatusGone, api.CodeLeaseGone, err.Error())
-	case errors.Is(err, queue.ErrQueueExists):
+	case errors.Is(err, queue.ErrQueueExists), errors.Is(err, queue.ErrTopicExists):
 		writeAPIErr(w, http.StatusConflict, api.CodeExists, err.Error())
 	case errors.Is(err, queue.ErrInvalidConfig), errors.Is(err, queue.ErrInvalidMessage):
 		writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, err.Error())

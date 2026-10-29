@@ -154,31 +154,19 @@ func (q *Queue) Send(body []byte, groupID string) (Message, error) {
 // FIFO position is still its send order. In a group it also waits for the
 // messages before it: it is delivered once it is the group head and due.
 func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (Message, error) {
-	if len(groupID) > MaxGroupIDLen || delay < 0 || delay > MaxSendDelay {
-		return Message{}, ErrInvalidMessage
+	if err := validateSend(groupID, delay); err != nil {
+		return Message{}, err
 	}
 	body = append([]byte(nil), body...)
 
 	q.b.persist.RLock()
 	q.mu.Lock()
-	if q.closed {
+	if err := q.acceptLocked(1); err != nil {
 		q.mu.Unlock()
 		q.b.persist.RUnlock()
-		return Message{}, ErrQueueClosed
+		return Message{}, err
 	}
-	if q.cfg.MaxMessages > 0 && len(q.msgs) >= q.cfg.MaxMessages {
-		q.mu.Unlock()
-		q.b.persist.RUnlock()
-		return Message{}, ErrQueueFull
-	}
-	q.seq++
-	now := q.b.clock.Now()
-	m := &Message{ID: newID(), GroupID: groupID, EnqueuedAt: now, seq: q.seq}
-	rec := msgRecord{ID: m.ID, GroupID: groupID, Body: body, EnqueuedAt: now, Seq: m.seq}
-	if delay > 0 {
-		m.availableAt = now.Add(delay)
-		rec.State, rec.AvailableAt = stateDelayed, m.availableAt
-	}
+	m, rec := q.newMessageLocked(body, groupID, delay, q.b.clock.Now())
 	pos := q.b.store.append(op{kind: opInsert, queue: q.name, msg: rec})
 	q.addLocked(m)
 	out := m.public()
@@ -189,6 +177,37 @@ func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (M
 	q.b.hooks.Event(q.name, EvSent, 1)
 	out.Body = body
 	return out, nil
+}
+
+func validateSend(groupID string, delay time.Duration) error {
+	if len(groupID) > MaxGroupIDLen || delay < 0 || delay > MaxSendDelay {
+		return ErrInvalidMessage
+	}
+	return nil
+}
+
+// acceptLocked reports whether n more messages fit.
+func (q *Queue) acceptLocked(n int) error {
+	if q.closed {
+		return ErrQueueClosed
+	}
+	if q.cfg.MaxMessages > 0 && len(q.msgs)+n > q.cfg.MaxMessages {
+		return ErrQueueFull
+	}
+	return nil
+}
+
+// newMessageLocked builds a new message and its insert record. The caller
+// appends the record to the store and then calls addLocked.
+func (q *Queue) newMessageLocked(body []byte, groupID string, delay time.Duration, now time.Time) (*Message, msgRecord) {
+	q.seq++
+	m := &Message{ID: newID(), GroupID: groupID, EnqueuedAt: now, seq: q.seq}
+	rec := msgRecord{ID: m.ID, GroupID: groupID, Body: body, EnqueuedAt: now, Seq: m.seq}
+	if delay > 0 {
+		m.availableAt = now.Add(delay)
+		rec.State, rec.AvailableAt = stateDelayed, m.availableAt
+	}
+	return m, rec
 }
 
 // Receive leases the next deliverable message. With wait>0 it long-polls.
