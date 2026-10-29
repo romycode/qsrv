@@ -120,7 +120,7 @@ jobs:
     name: Performance
     runs-on: ubuntu-latest
     env:
-      COUNT: "5"
+      COUNT: "6"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
