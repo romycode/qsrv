@@ -1,0 +1,48 @@
+{
+    "name": "romycode/qsrv",
+    "description": "PHP client and Symfony Messenger transport for qsrv, a durable queue service",
+    "type": "library",
+    "keywords": [
+        "queue",
+        "messenger",
+        "symfony",
+        "transport",
+        "qsrv"
+    ],
+    "homepage": "https://github.com/romycode/qsrv",
+    "authors": [{"name": "Albert Romera"}],
+    "require": {
+        "php": ">=8.4",
+        "symfony/http-client": "^7.4 || ^8.0",
+        "symfony/http-client-contracts": "^3.5"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^12.0",
+        "symfony/messenger": "^7.4 || ^8.0",
+        "symfony/property-access": "^7.4 || ^8.0",
+        "symfony/serializer": "^7.4 || ^8.0"
+    },
+    "suggest": {
+        "symfony/messenger": "To use qsrv as a Messenger transport (qsrv:// DSN)"
+    },
+    "conflict": {
+        "symfony/messenger": "<7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Romycode\\Qsrv\\": "php/src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Romycode\\Qsrv\\Tests\\": "php/tests/"
+        }
+    },
+    "config": {
+        "vendor-dir": "php/vendor",
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": "phpunit -c php/phpunit.xml.dist"
+    }
+}

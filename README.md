@@ -130,6 +130,11 @@ qctl replay -to orders-replay orders
 
 Go SDK: `github.com/romycode/qsrv/pkg/client`.
 
+## PHP and Symfony Messenger
+
+`composer require romycode/qsrv`: a PHP client and a Messenger transport
+(`qsrv://KEY@host:8080/queue`). See [php/README.md](php/README.md).
+
 ## Metrics and alerts
 
 Prometheus text format on `-metrics-addr` (default `127.0.0.1:9464`, path
@@ -223,6 +228,8 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
   static cross-builds for linux/amd64, linux/arm64 and darwin/arm64.
 - **Tests**: `go test -race` with the WASM driver and with the cgo driver;
   coverage (`-coverpkg=./...`) on the WASM run, compared with the PR base.
+- **PHP**: unit tests plus integration tests against a real qsrv, for PHP
+  8.4 and 8.5 × Symfony 7.4 and 8.1.
 - **Performance**: the Go benchmarks, base vs head interleaved 6 times on
   the same runner and compared with `benchstat`, plus a `qbench` load test
   against a real server.
