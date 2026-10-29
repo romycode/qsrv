@@ -37,7 +37,7 @@ Commands:
   create [flags] NAME                 create a queue (see: qctl create -h)
   info NAME                           config + stats
   delete NAME                         delete a queue and its messages
-  send [-group G] QUEUE [BODY|-]      send BODY, or stdin if omitted or "-"
+  send [-group G] [-delay D] QUEUE [BODY|-]  send BODY, or stdin if omitted or "-"
   recv [-wait D] [-ack] [-raw] QUEUE  lease one message (exit 3 if empty)
   ack QUEUE LEASE
   nack QUEUE LEASE
@@ -166,9 +166,10 @@ func cmdInfo(ctx context.Context, c *client.Client, name string) error {
 func cmdSend(ctx context.Context, c *client.Client, args []string) error {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	group := fs.String("group", "", "ordering group id")
+	delay := fs.Duration("delay", 0, "deliverable only after this long (max 720h)")
 	fs.Parse(args)
 	if fs.NArg() < 1 || fs.NArg() > 2 {
-		return errors.New("usage: qctl send [-group G] QUEUE [BODY|-]")
+		return errors.New("usage: qctl send [-group G] [-delay D] QUEUE [BODY|-]")
 	}
 	var body []byte
 	if fs.NArg() == 2 && fs.Arg(1) != "-" {
@@ -180,7 +181,7 @@ func cmdSend(ctx context.Context, c *client.Client, args []string) error {
 		}
 		body = b
 	}
-	m, err := c.Send(ctx, fs.Arg(0), body, *group)
+	m, err := c.SendWith(ctx, fs.Arg(0), body, client.SendOptions{GroupID: *group, Delay: *delay})
 	if err != nil {
 		return err
 	}

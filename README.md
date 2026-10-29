@@ -102,7 +102,7 @@ The single-node weak point is the disk. Options, from least to most effort:
 | PUT | `/queues/{name}` | create: `{"visibility_timeout":"30s","retry":{"max_attempts":5,"initial_backoff":"1s","max_backoff":"1m","multiplier":2},"dead_letter_queue":"dlq","ordering":"available","max_messages":0,"retention":"2160h"}` |
 | GET | `/queues/{name}` | config + stats (`history` = retained processed messages) |
 | DELETE | `/queues/{name}` | deletes live messages **and history**; refused (422) while it is another queue's DLQ |
-| POST | `/queues/{name}/messages` | `{"body":"text"}` or `{"body_base64":"..."}`, optional `"group_id"` |
+| POST | `/queues/{name}/messages` | `{"body":"text"}` or `{"body_base64":"..."}`, optional `"group_id"` and `"delay":"30s"` (max `720h`; deliverable after that, still FIFO by send order, and in a group it also waits for the messages before it) |
 | POST | `/queues/{name}/receive?wait=20s` | 200 delivery, 204 empty |
 | POST | `/queues/{name}/leases/{lease}/ack` | 204, 410 if lease gone |
 | POST | `/queues/{name}/leases/{lease}/nack` | 204, applies retry policy |
