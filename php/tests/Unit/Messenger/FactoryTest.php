@@ -90,4 +90,32 @@ final class FactoryTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         (new QsrvTransportFactory())->createTransport('qsrv://k@h/q?on_reject=drop', [], new PhpSerializer());
     }
+
+    public function testTopicOptions(): void
+    {
+        $c = QsrvTransportFactory::parse('qsrv://k@h/billing?topic=orders&subscribe=orders,refunds');
+        self::assertSame('orders', $c['topic']);
+        self::assertSame(['orders', 'refunds'], $c['subscribe']);
+
+        $c = QsrvTransportFactory::parse('qsrv://k@h', ['topic' => 'orders']);
+        self::assertSame('', $c['queue'], 'publish-only transport needs no queue');
+
+        $c = QsrvTransportFactory::parse('qsrv://k@h/q', ['subscribe' => ['a', 'b']]);
+        self::assertSame(['a', 'b'], $c['subscribe']);
+        self::assertNull($c['topic']);
+    }
+
+    public function testSubscribeNeedsAQueue(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        QsrvTransportFactory::parse('qsrv://k@h?topic=t&subscribe=t');
+    }
+
+    public function testPublishOnlyTransportCannotConsume(): void
+    {
+        $t = (new QsrvTransportFactory())->createTransport('qsrv://k@h?topic=orders', [], new PhpSerializer());
+        self::assertSame(0, $t->getMessageCount());
+        $this->expectException(\LogicException::class);
+        iterator_to_array($t->get());
+    }
 }

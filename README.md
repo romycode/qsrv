@@ -7,6 +7,7 @@ Named FIFO queues over HTTP, with:
 - **retries** with exponential backoff and **dead-letter queues**;
 - **ordering groups**: strict order per entity, parallel across entities;
 - **delayed messages**;
+- **topics**: publish once, every subscribed queue gets a copy, atomically;
 - **history and replay** of processed messages;
 - every acknowledged write is **fsynced**: a crash never loses what a client saw.
 
@@ -69,6 +70,10 @@ for {
 }
 ```
 
+Fan-out: `c.CreateTopic(ctx, "orders", "billing", "email")`, then
+`c.Publish(ctx, "orders", body, client.SendOptions{})` writes one copy to each
+queue in a single transaction.
+
 Runnable example with groups, a delayed message, retries, a DLQ and lease
 heartbeats: [examples/go](examples/go/main.go).
 
@@ -107,6 +112,7 @@ qctl recv [-wait D] [-ack] [-raw] QUEUE         # exit 3 if empty
 qctl ack|nack QUEUE LEASE   ·   qctl extend [-by D] QUEUE LEASE
 qctl consume -concurrency 8 QUEUE -- ./handler.sh   # stdin = body; exit 0 = ack, else nack
 qctl replay -to DEST [-from T] [-until T] [-group G] [-states S] QUEUE
+qctl topic create NAME [QUEUE...] | sub|unsub NAME QUEUE | publish [-group G] NAME [BODY|-]
 ```
 
 `consume` heartbeats the lease while the command runs, exports
@@ -117,7 +123,7 @@ running jobs finish. `qctl <command> -h` lists each command's flags.
 
 | | |
 |---|---|
-| [Concepts](docs/concepts.md) | leases, retries and DLQs, ordering groups, delays, replay, guarantees |
+| [Concepts](docs/concepts.md) | leases, retries and DLQs, ordering groups, delays, topics, replay, guarantees |
 | [HTTP API](docs/api.md) | every endpoint, request and response, error codes |
 | [Operations](docs/operations.md) | configuration, Docker, backups, metrics and alerts, performance and sizing |
 | [PHP](php/README.md) | client, Messenger transport, retries with Messenger vs qsrv |

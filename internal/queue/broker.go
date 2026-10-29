@@ -41,6 +41,7 @@ type Broker struct {
 
 	mu     sync.RWMutex
 	queues map[string]*Queue
+	topics map[string][]string // topic -> subscribed queues, sorted
 
 	stop      chan struct{}
 	done      chan struct{}
@@ -93,7 +94,13 @@ func Open(dataDir string, o Options) (*Broker, error) {
 		return nil, fmt.Errorf("load state: %w", err)
 	}
 
-	b := &Broker{clock: o.Clock, store: st, hooks: o.Hooks, queues: map[string]*Queue{}, stop: make(chan struct{}), done: make(chan struct{})}
+	topics, err := st.loadTopics()
+	if err != nil {
+		st.close()
+		return nil, fmt.Errorf("load topics: %w", err)
+	}
+
+	b := &Broker{clock: o.Clock, store: st, hooks: o.Hooks, queues: map[string]*Queue{}, topics: topics, stop: make(chan struct{}), done: make(chan struct{})}
 	total := 0
 	for _, lq := range loaded {
 		q := newQueue(lq.name, lq.cfg, b)
@@ -101,7 +108,7 @@ func Open(dataDir string, o Options) (*Broker, error) {
 		b.queues[lq.name] = q
 		total += len(lq.msgs)
 	}
-	slog.Info("recovered", "queues", len(b.queues), "live_messages", total, "took", time.Since(start).Round(time.Millisecond))
+	slog.Info("recovered", "queues", len(b.queues), "topics", len(b.topics), "live_messages", total, "took", time.Since(start).Round(time.Millisecond))
 
 	go b.janitor(o.JanitorEvery)
 	return b, nil
@@ -163,7 +170,8 @@ func (b *Broker) Get(name string) (*Queue, error) {
 }
 
 // Delete removes a queue, its live messages and its history. Refused while
-// another queue uses it as DLQ, so dead letters are never silently dropped.
+// another queue uses it as DLQ or it is subscribed to a topic, so dead
+// letters and published messages are never silently dropped.
 func (b *Broker) Delete(name string) error {
 	b.persist.Lock()
 	b.mu.Lock()
@@ -179,6 +187,11 @@ func (b *Broker) Delete(name string) error {
 			b.persist.Unlock()
 			return fmt.Errorf("%w: %q is the dead letter queue of %q", ErrInvalidConfig, name, other)
 		}
+	}
+	if topics := b.topicsOfLocked(name); len(topics) > 0 {
+		b.mu.Unlock()
+		b.persist.Unlock()
+		return fmt.Errorf("%w: %q is subscribed to topic(s) %v; unsubscribe it first", ErrInvalidConfig, name, topics)
 	}
 	delete(b.queues, name)
 	q.close()

@@ -19,6 +19,8 @@ abstract class IntegrationTestCase extends TestCase
     protected Client $client;
     /** @var list<string> */
     private array $queues = [];
+    /** @var list<string> */
+    private array $topics = [];
 
     protected function setUp(): void
     {
@@ -32,13 +34,25 @@ abstract class IntegrationTestCase extends TestCase
 
     protected function tearDown(): void
     {
-        // Delete DLQs last: a queue can't be deleted while it is another queue's DLQ.
+        // Topics first (a subscribed queue can't be deleted), DLQs last.
+        foreach ($this->topics as $t) {
+            try {
+                $this->client->deleteTopic($t);
+            } catch (QsrvException) {
+            }
+        }
         foreach (array_reverse($this->queues) as $q) {
             try {
                 $this->client->deleteQueue($q);
             } catch (QsrvException) {
             }
         }
+    }
+
+    /** A unique topic name, deleted after the test. */
+    protected function topicName(string $prefix = 'php-topic'): string
+    {
+        return $this->topics[] = $prefix.'-'.bin2hex(random_bytes(6));
     }
 
     /** A unique queue name, deleted after the test. */

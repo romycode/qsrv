@@ -199,3 +199,62 @@ func TestSendDelay(t *testing.T) {
 		t.Fatalf("want 400 for delay over max, got %v", err)
 	}
 }
+
+func TestTopics(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	c := client.New(srv.URL, key)
+	for _, q := range []string{"billing", "email"} {
+		if _, err := c.CreateQueue(ctx, q, api.QueueConfig{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	top, err := c.CreateTopic(ctx, "orders", "email")
+	if err != nil || top.Name != "orders" || len(top.Queues) != 1 {
+		t.Fatalf("create: %+v %v", top, err)
+	}
+	if _, err := c.CreateTopic(ctx, "orders"); !hasStatus(err, http.StatusConflict) {
+		t.Fatalf("duplicate: %v", err)
+	}
+	if _, err := c.CreateTopic(ctx, "x", "missing"); !hasStatus(err, http.StatusUnprocessableEntity) {
+		t.Fatalf("missing queue: %v", err)
+	}
+	if top, err = c.Subscribe(ctx, "orders", "billing"); err != nil || len(top.Queues) != 2 {
+		t.Fatalf("subscribe: %+v %v", top, err)
+	}
+
+	pub, err := c.Publish(ctx, "orders", []byte("o1"), client.SendOptions{GroupID: "c42"})
+	if err != nil || len(pub) != 2 || pub[0].Queue != "billing" || pub[1].Queue != "email" || pub[0].ID == "" {
+		t.Fatalf("publish: %+v %v", pub, err)
+	}
+	for _, q := range []string{"billing", "email"} {
+		d, err := c.Receive(ctx, q, 0)
+		if err != nil || d == nil || string(d.Message.Bytes()) != "o1" || d.Message.GroupID != "c42" {
+			t.Fatalf("%s: %+v %v", q, d, err)
+		}
+	}
+
+	if err := c.DeleteQueue(ctx, "email"); !hasStatus(err, http.StatusUnprocessableEntity) {
+		t.Fatalf("delete subscribed queue: %v", err)
+	}
+	if top, err = c.Unsubscribe(ctx, "orders", "email"); err != nil || len(top.Queues) != 1 {
+		t.Fatalf("unsubscribe: %+v %v", top, err)
+	}
+	if list, err := c.ListTopics(ctx); err != nil || len(list) != 1 {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	if _, err := c.Publish(ctx, "nope", []byte("x"), client.SendOptions{}); !client.IsNotFound(err) {
+		t.Fatalf("publish to missing topic: %v", err)
+	}
+	if err := c.DeleteTopic(ctx, "orders"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetTopic(ctx, "orders"); !client.IsNotFound(err) {
+		t.Fatalf("deleted topic: %v", err)
+	}
+}
+
+func hasStatus(err error, status int) bool {
+	var ae *client.APIError
+	return errorsAs(err, &ae) && ae.Status == status
+}

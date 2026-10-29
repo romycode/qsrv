@@ -46,6 +46,8 @@ Commands:
                                       exit 0 = ack, otherwise nack
   replay [flags] QUEUE -to DEST       re-enqueue processed messages into DEST
                                       (see: qctl replay -h)
+  topic list|create|info|delete|sub|unsub|publish
+                                      fan-out to several queues (see: qctl topic)
 `
 
 const exitEmpty = 3
@@ -92,6 +94,8 @@ func main() {
 		err = cmdConsume(ctx, c, args)
 	case "replay":
 		err = cmdReplay(ctx, c, args)
+	case "topic":
+		err = cmdTopic(ctx, c, args)
 	case "help", "-h", "--help":
 		g.Usage()
 	default:

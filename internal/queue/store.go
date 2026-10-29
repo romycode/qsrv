@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE UNIQUE INDEX IF NOT EXISTS messages_queue_id  ON messages(queue, id);
 CREATE INDEX        IF NOT EXISTS messages_queue_seq ON messages(queue, seq);
 CREATE INDEX        IF NOT EXISTS messages_history   ON messages(queue, state, done_at);
+CREATE TABLE IF NOT EXISTS topics (
+	name       TEXT PRIMARY KEY,
+	queues     TEXT NOT NULL, -- JSON array of subscribed queue names
+	created_at INTEGER NOT NULL
+);
 `
 
 // msgRecord is the persisted view of a live message.
@@ -81,11 +86,13 @@ const (
 	opInsert  // new message with body
 	opDeliver // lease granted
 	opAck
-	opDrop   // exhausted, no DLQ
-	opFail   // nack/expiry: ready or delayed (at)
-	opExtend // lease deadline moved
-	opMove   // dead-letter: copy row (with body) into dst, mark src dead_lettered
-	opCopy   // replay: copy historical row as a new message into dst
+	opDrop        // exhausted, no DLQ
+	opFail        // nack/expiry: ready or delayed (at)
+	opExtend      // lease deadline moved
+	opMove        // dead-letter: copy row (with body) into dst, mark src dead_lettered
+	opCopy        // replay: copy historical row as a new message into dst
+	opTopicSet    // create or replace a topic's subscriptions
+	opTopicDelete // delete a topic
 )
 
 // op is one state change, applied by the writer in append order.
@@ -98,6 +105,7 @@ type op struct {
 	cfg   Config    // create
 	msg   msgRecord // insert: full row; move/copy: the new row in dst (no body)
 	dst   string    // move/copy
+	subs  []string  // topic set: subscribed queues (queue = topic name)
 }
 
 // store persists ops through a single writer goroutine that commits every
@@ -166,6 +174,20 @@ func (s *store) waitSync(pos uint64) {
 	for s.committed < pos {
 		s.synced.Wait()
 	}
+}
+
+// appendAll queues ops contiguously: the writer takes all pending ops at
+// once, so they land in the same transaction (all or nothing on disk).
+func (s *store) appendAll(ops []op) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		s.onFatal(errors.New("store: append after close"))
+	}
+	s.pending = append(s.pending, ops...)
+	s.appended += uint64(len(ops))
+	s.work.Signal()
+	return s.appended
 }
 
 // sync waits until every op appended so far is committed.
@@ -305,6 +327,17 @@ func apply(tx *sql.Tx, o *op) error {
 		res, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of)
 			SELECT ?, ?, ?, group_id, body, ?, 0, id FROM messages WHERE queue = ? AND id = ?`,
 			o.dst, m.ID, m.Seq, ns(m.EnqueuedAt), o.queue, o.id)
+	case opTopicSet:
+		var subs []byte
+		if subs, err = json.Marshal(o.subs); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO topics(name, queues, created_at) VALUES (?, ?, ?)
+			ON CONFLICT(name) DO UPDATE SET queues = excluded.queues`, o.queue, subs, ns(o.at))
+		return err
+	case opTopicDelete:
+		_, err = tx.Exec(`DELETE FROM topics WHERE name = ?`, o.queue)
+		return err
 	default:
 		return fmt.Errorf("unknown op %d", o.kind)
 	}
@@ -417,6 +450,29 @@ func (s *store) load() ([]*loadedQueue, error) {
 		if lq := byName[q]; lq != nil {
 			lq.msgs = append(lq.msgs, &m)
 		}
+	}
+	return out, rows.Err()
+}
+
+// loadTopics returns every topic's subscribed queues.
+func (s *store) loadTopics() (map[string][]string, error) {
+	rows, err := s.r.Query(`SELECT name, queues FROM topics`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var name string
+		var raw []byte
+		if err := rows.Scan(&name, &raw); err != nil {
+			return nil, err
+		}
+		var subs []string
+		if err := json.Unmarshal(raw, &subs); err != nil {
+			return nil, fmt.Errorf("topic %s: %w", name, err)
+		}
+		out[name] = subs
 	}
 	return out, rows.Err()
 }

@@ -19,6 +19,12 @@ final readonly class Message
     ) {
     }
 
+    /** @internal */
+    public function withBody(string $body): self
+    {
+        return new self($this->id, $body, $this->groupId, $this->attempts, $this->enqueuedAt, $this->replayOf);
+    }
+
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self
     {

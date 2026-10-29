@@ -130,6 +130,32 @@ type ReplayResponse struct {
 	NextCursor uint64 `json:"next_cursor,omitempty"` // absent = done
 }
 
+// Topic fans published messages out to its subscribed queues.
+type Topic struct {
+	Name   string   `json:"name"`
+	Queues []string `json:"queues"`
+}
+
+type TopicList struct {
+	Topics []Topic `json:"topics"`
+}
+
+// TopicRequest creates a topic, optionally with initial subscriptions.
+type TopicRequest struct {
+	Queues []string `json:"queues,omitempty"`
+}
+
+// PublishedMessage is the copy of a published message in one queue.
+type PublishedMessage struct {
+	Queue string `json:"queue"`
+	Message
+}
+
+// PublishResponse lists one copy per subscribed queue (empty with none).
+type PublishResponse struct {
+	Messages []PublishedMessage `json:"messages"`
+}
+
 type Error struct {
 	Error string `json:"error"`
 	Code  string `json:"code"`

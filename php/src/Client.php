@@ -12,6 +12,7 @@ use Romycode\Qsrv\Model\Queue;
 use Romycode\Qsrv\Model\QueueConfig;
 use Romycode\Qsrv\Model\ReplayResult;
 use Romycode\Qsrv\Model\Time;
+use Romycode\Qsrv\Model\Topic;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Contracts\HttpClient\Exception\ExceptionInterface as HttpException;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
@@ -83,20 +84,9 @@ final class Client
      */
     public function send(string $queue, string $body, ?string $groupId = null, float $delay = 0): Message
     {
-        if ($delay < 0 || $delay > self::MAX_DELAY) {
-            throw new \InvalidArgumentException(\sprintf('qsrv: delay must be between 0 and %d seconds', self::MAX_DELAY));
-        }
-        $in = 1 === preg_match('//u', $body) ? ['body' => $body] : ['body_base64' => base64_encode($body)];
-        if (null !== $groupId && '' !== $groupId) {
-            $in['group_id'] = $groupId;
-        }
-        if ($delay > 0) {
-            $in['delay'] = Time::duration($delay);
-        }
-        $out = Message::fromArray($this->request('POST', self::q($queue, '/messages'), $in));
+        $out = Message::fromArray($this->request('POST', self::q($queue, '/messages'), self::payload($body, $groupId, $delay)));
 
-        // The response omits the body; return the one we sent.
-        return new Message($out->id, $body, $out->groupId, $out->attempts, $out->enqueuedAt, $out->replayOf);
+        return $out->withBody($body);
     }
 
     /**
@@ -169,6 +159,70 @@ final class Client
         return new ReplayResult((int) ($out['replayed'] ?? 0), isset($out['next_cursor']) ? (int) $out['next_cursor'] : null);
     }
 
+    // --- Topics: fan-out to several queues ------------------------------
+
+    /** @return list<Topic> */
+    public function listTopics(): array
+    {
+        $out = $this->request('GET', '/v1/topics');
+
+        return array_map(Topic::fromArray(...), $out['topics'] ?? []);
+    }
+
+    /**
+     * @param list<string> $queues initial subscriptions (queues must exist)
+     *
+     * @throws Exception\QueueExistsException if the topic already exists
+     */
+    public function createTopic(string $name, array $queues = []): Topic
+    {
+        return Topic::fromArray($this->request('PUT', self::t($name), (object) ([] === $queues ? [] : ['queues' => array_values($queues)])));
+    }
+
+    /** @throws Exception\NotFoundException */
+    public function getTopic(string $name): Topic
+    {
+        return Topic::fromArray($this->request('GET', self::t($name)));
+    }
+
+    /** Deletes the topic. Its queues and their messages stay. */
+    public function deleteTopic(string $name): void
+    {
+        $this->request('DELETE', self::t($name));
+    }
+
+    /** $queue gets a copy of every message published to $topic from now on. Idempotent. */
+    public function subscribe(string $topic, string $queue): Topic
+    {
+        return Topic::fromArray($this->request('PUT', self::t($topic, '/subscriptions/'.rawurlencode($queue))));
+    }
+
+    /** Stops the copies to $queue. Idempotent; messages already queued stay. */
+    public function unsubscribe(string $topic, string $queue): Topic
+    {
+        return Topic::fromArray($this->request('DELETE', self::t($topic, '/subscriptions/'.rawurlencode($queue))));
+    }
+
+    /**
+     * Inserts a copy of $body into every queue subscribed to $topic, in one
+     * transaction: all of them get it or none does. Group and delay apply in
+     * each queue as for send().
+     *
+     * @return array<string, Message> the copy in each queue, by queue name (empty without subscribers)
+     *
+     * @throws Exception\QueueFullException if any subscribed queue is full (nothing is published)
+     */
+    public function publish(string $topic, string $body, ?string $groupId = null, float $delay = 0): array
+    {
+        $out = $this->request('POST', self::t($topic, '/messages'), self::payload($body, $groupId, $delay));
+        $copies = [];
+        foreach ($out['messages'] ?? [] as $m) {
+            $copies[(string) $m['queue']] = Message::fromArray($m)->withBody($body);
+        }
+
+        return $copies;
+    }
+
     /** True if /healthz answers 200. Never throws. */
     public function healthy(): bool
     {
@@ -218,6 +272,28 @@ final class Client
         }
 
         return $data;
+    }
+
+    /** @return array<string, string> */
+    private static function payload(string $body, ?string $groupId, float $delay): array
+    {
+        if ($delay < 0 || $delay > self::MAX_DELAY) {
+            throw new \InvalidArgumentException(\sprintf('qsrv: delay must be between 0 and %d seconds', self::MAX_DELAY));
+        }
+        $in = 1 === preg_match('//u', $body) ? ['body' => $body] : ['body_base64' => base64_encode($body)];
+        if (null !== $groupId && '' !== $groupId) {
+            $in['group_id'] = $groupId;
+        }
+        if ($delay > 0) {
+            $in['delay'] = Time::duration($delay);
+        }
+
+        return $in;
+    }
+
+    private static function t(string $topic, string $suffix = ''): string
+    {
+        return '/v1/topics/'.rawurlencode($topic).$suffix;
     }
 
     private static function q(string $queue, string $suffix = ''): string

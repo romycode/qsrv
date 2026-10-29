@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Romycode\Qsrv\Tests\Integration;
 
+use Romycode\Qsrv\Exception\ApiException;
 use Romycode\Qsrv\Exception\LeaseGoneException;
+use Romycode\Qsrv\Exception\QueueFullException;
 use Romycode\Qsrv\Exception\NotFoundException;
 use Romycode\Qsrv\Exception\QueueExistsException;
 use Romycode\Qsrv\Exception\UnauthorizedException;
@@ -147,5 +149,45 @@ final class ClientIntegrationTest extends IntegrationTestCase
     {
         $this->expectException(UnauthorizedException::class);
         (new Client((string) getenv('QSRV_TEST_URL'), str_repeat('x', 40)))->listQueues();
+    }
+
+    public function testTopicFanOut(): void
+    {
+        $billing = $this->queueName();
+        $email = $this->queueName();
+        $topic = $this->topicName();
+        $this->client->createQueue($billing);
+        $this->client->createQueue($email, new QueueConfig(maxMessages: 1));
+        $this->client->createTopic($topic, [$billing]);
+        self::assertEqualsCanonicalizing([$billing, $email], $this->client->subscribe($topic, $email)->queues);
+
+        $copies = $this->client->publish($topic, 'order 1', groupId: 'c42');
+        self::assertEqualsCanonicalizing([$billing, $email], array_keys($copies));
+        foreach ([$billing, $email] as $q) {
+            $d = $this->client->receive($q);
+            self::assertSame('order 1', $d?->message->body);
+            self::assertSame('c42', $d->message->groupId);
+            self::assertSame($copies[$q]->id, $d->message->id);
+            $this->client->ack($q, $d->leaseId);
+        }
+
+        // All or nothing: email is full, so billing must not get a copy either.
+        $this->client->send($email, 'filler');
+        try {
+            $this->client->publish($topic, 'order 2');
+            self::fail('published into a full queue');
+        } catch (QueueFullException) {
+        }
+        self::assertSame(0, $this->client->getQueue($billing)->stats->messages);
+
+        try {
+            $this->client->deleteQueue($email);
+            self::fail('deleted a subscribed queue');
+        } catch (ApiException $e) {
+            self::assertSame(422, $e->status);
+        }
+        $this->client->unsubscribe($topic, $email);
+        self::assertSame([$billing], $this->client->getTopic($topic)->queues);
+        self::assertContains($topic, array_map(static fn ($t) => $t->name, $this->client->listTopics()));
     }
 }

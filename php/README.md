@@ -44,6 +44,14 @@ while ($d = $qsrv->receive('emails', wait: 20)) {   // long-poll up to 20s
 }
 ```
 
+Fan-out with topics: every subscribed queue gets its own copy, atomically.
+
+```php
+$qsrv->createTopic('orders', ['billing', 'email']);   // or $qsrv->subscribe('orders', 'email')
+$copies = $qsrv->publish('orders', json_encode($event), groupId: 'customer-42');
+// ['billing' => Message, 'email' => Message]
+```
+
 Also `extend()` (heartbeat for long jobs), `getQueue()` (config + stats),
 `listQueues()`, `deleteQueue()`, `replay()` and `healthy()`. Durations are
 seconds (floats). Bodies are arbitrary bytes.
@@ -100,7 +108,35 @@ bin/console messenger:stats                   # messages waiting
 | `auto_setup` | `true` | create the queue on first use if missing |
 | `on_reject` | `ack` | `ack` or `nack`, see below |
 | `timeout` | `10` | HTTP timeout, seconds |
+| `topic` | — | `send` publishes to this topic instead of the queue (the queue is then optional: a publish-only transport) |
+| `subscribe` | — | topics this queue subscribes to on setup (created if missing); list, or comma-separated in the DSN |
 | `queue_config` | server defaults | used when the transport creates the queue: `visibility_timeout`, `retry` (`max_attempts`, `initial_backoff`, `max_backoff`, `multiplier`), `dead_letter_queue`, `ordering`, `max_messages`, `retention`. Ignored if the queue already exists. |
+
+### Topics: one event, several services
+
+The producing app publishes to a topic; each consuming app has its own queue
+subscribed to it, so each gets every event with its own retries and DLQ:
+
+```yaml
+# producer app
+framework:
+    messenger:
+        transports:
+            order_events: 'qsrv://%env(QSRV_API_KEY)%@qsrv:8080?topic=orders'
+        routing:
+            App\Event\OrderPlaced: order_events
+
+# billing app (same in the email app, with its own queue)
+framework:
+    messenger:
+        transports:
+            orders: 'qsrv://%env(QSRV_API_KEY)%@qsrv:8080/billing-orders?subscribe=orders'
+```
+
+`messenger:setup-transports` in the billing app creates `billing-orders`,
+creates the `orders` topic if needed and subscribes the queue. A
+publish-only transport can't be consumed. Sending adds `QsrvPublishedStamp`
+with the message id in each queue.
 
 ### Stamps
 
