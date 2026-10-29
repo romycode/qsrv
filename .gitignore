@@ -4,6 +4,3 @@ bin/
 *.db-shm
 .wasmcache/
 data/
-/php/vendor/
-/composer.lock
-/php/.phpunit.cache/

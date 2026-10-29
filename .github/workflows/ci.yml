@@ -143,8 +143,10 @@ jobs:
           coverage: none
           tools: composer
       - name: composer validate
+        working-directory: php
         run: composer validate --no-check-all --no-check-publish
       - name: Install (Symfony ${{ matrix.symfony }}.*)
+        working-directory: php
         env:
           SF: ${{ matrix.symfony }}.*
         run: |
@@ -165,7 +167,7 @@ jobs:
         id: phpunit
         run: |
           # --fail-on-skipped: integration tests must run here, not be skipped.
-          if php/vendor/bin/phpunit -c php/phpunit.xml.dist --fail-on-skipped --no-progress --colors=never > phpunit.txt 2>&1; then
+          if (cd php && vendor/bin/phpunit --fail-on-skipped --no-progress --colors=never) > phpunit.txt 2>&1; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"

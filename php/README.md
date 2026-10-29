@@ -1,15 +1,16 @@
 # qsrv for PHP
 
-PHP client and Symfony Messenger transport for [qsrv](../README.md).
+PHP client and Symfony Messenger transport for [qsrv](https://github.com/romycode/qsrv).
 PHP 8.4+, Symfony 7.4 LTS or 8.x.
 
 ```sh
-composer require romycode/qsrv
+composer require romycode/qsrv-php
 ```
 
-The package lives in the qsrv repository (`composer.json` at the root, code
-in `php/`). Composer downloads only `php/src`: the Go server is excluded via
-`.gitattributes`. Versions are the repository tags, shared with the Go module.
+Developed in the `php/` directory of [romycode/qsrv](https://github.com/romycode/qsrv)
+and published to the read-only mirror [romycode/qsrv-php](https://github.com/romycode/qsrv-php),
+which Packagist reads. Issues and pull requests go to romycode/qsrv. The PHP
+package has its own versions, independent of the server's.
 
 ## Client
 
@@ -157,12 +158,11 @@ serializer as they are, with no headers.
 
 ## Tests
 
+From `php/` in the qsrv repository:
+
 ```sh
 composer install
 composer test                                   # unit tests; integration tests are skipped
-QSRV_API_KEYS=$(openssl rand -hex 32) go run ./cmd/qsrv -data-dir /tmp/qsrv-test -addr 127.0.0.1:18080 &
+QSRV_API_KEYS=$(openssl rand -hex 32) go run ../cmd/qsrv -data-dir /tmp/qsrv-test -addr 127.0.0.1:18080 &
 QSRV_TEST_URL=http://127.0.0.1:18080 QSRV_TEST_API_KEY=$QSRV_API_KEYS composer test
 ```
-
-`vendor/` goes to `php/vendor`: a `vendor/` directory at the root would switch
-the Go toolchain to vendor mode.
