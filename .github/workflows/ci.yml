@@ -92,8 +92,13 @@ jobs:
       - name: go test -race
         id: test
         env:
-          COVER_FLAGS: ${{ matrix.coverage && '-covermode=atomic -coverpkg=./... -coverprofile=coverage.out' || '' }}
+          COVER: ${{ matrix.coverage }}
         run: |
+          # Coverage of every package except the examples.
+          COVER_FLAGS=""
+          if [ "$COVER" = "true" ]; then
+            COVER_FLAGS="-covermode=atomic -coverpkg=$(go list ./... | grep -v /examples/ | paste -sd, -) -coverprofile=coverage.out"
+          fi
           # -race needs cgo; the driver is chosen by build tag, not CGO_ENABLED.
           if go test -race -count=1 -timeout=10m -tags="${{ matrix.tags }}" $COVER_FLAGS -json ./... > test.json; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
@@ -226,6 +231,38 @@ jobs:
         run: |
           echo "::error::PHPUnit failed"; cat qsrv.log; exit 1
 
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+          tools: composer
+      - name: Start qsrv
+        run: |
+          CGO_ENABLED=0 go build -o bin/qsrv ./cmd/qsrv
+          key=$(openssl rand -hex 32)
+          echo "QSRV_API_KEY=$key" >> "$GITHUB_ENV"
+          echo "QSRV_ADDR=http://127.0.0.1:18080" >> "$GITHUB_ENV"
+          QSRV_API_KEYS=$key nohup bin/qsrv -addr 127.0.0.1:18080 -data-dir "$RUNNER_TEMP/qsrv" -metrics-addr "" -log-level warn > qsrv.log 2>&1 &
+          for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && exit 0; sleep 0.1; done
+          cat qsrv.log; exit 1
+      - name: Go example
+        run: go run ./examples/go
+      - name: PHP examples
+        working-directory: examples/php
+        run: |
+          composer install --no-progress
+          php client.php
+          php messenger.php
+
   bench:
     name: Performance
     runs-on: ubuntu-latest
@@ -334,7 +371,7 @@ jobs:
 
   report:
     name: PR report
-    needs: [lint, test, php, bench]
+    needs: [lint, test, php, examples, bench]
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -350,6 +387,7 @@ jobs:
           LINT: ${{ needs.lint.result }}
           TEST: ${{ needs.test.result }}
           PHP: ${{ needs.php.result }}
+          EXAMPLES: ${{ needs.examples.result }}
           BENCH: ${{ needs.bench.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -359,7 +397,7 @@ jobs:
             echo "<!-- qsrv-ci-report -->"
             echo "### CI report for \`${HEAD_SHA:0:7}\`"
             echo
-            echo "$(icon "$LINT") lint & build · $(icon "$TEST") tests · $(icon "$PHP") php · $(icon "$BENCH") performance · [run]($RUN_URL)"
+            echo "$(icon "$LINT") lint & build · $(icon "$TEST") tests · $(icon "$PHP") php · $(icon "$EXAMPLES") examples · $(icon "$BENCH") performance · [run]($RUN_URL)"
             echo
             cat reports/*.md 2>/dev/null
           } > comment.md

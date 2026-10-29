@@ -12,6 +12,9 @@ and published with `scripts/release-php.sh` to the read-only mirror
 [romycode/qsrv-php](https://github.com/romycode/qsrv-php), which Packagist reads. Issues and pull requests go to romycode/qsrv. The PHP
 package has its own versions, independent of the server's.
 
+Runnable examples (plain client, and Messenger with a Worker) are in
+[examples/php](https://github.com/romycode/qsrv/tree/main/examples/php).
+
 ## Client
 
 ```php
