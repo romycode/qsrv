@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Romycode\Qsrv\Tests\Integration;
 
 use Romycode\Qsrv\Messenger\QsrvGroupStamp;
+use Romycode\Qsrv\Messenger\QsrvPublishedStamp;
 use Romycode\Qsrv\Messenger\QsrvReceivedStamp;
 use Romycode\Qsrv\Messenger\QsrvTransport;
 use Romycode\Qsrv\Messenger\QsrvTransportFactory;
@@ -33,7 +34,9 @@ final class MessengerIntegrationTest extends IntegrationTestCase
     private function transport(string $queue, array $options = [], ?SerializerInterface $serializer = null): QsrvTransport
     {
         $url = parse_url((string) getenv('QSRV_TEST_URL'));
+        // An empty queue is allowed with a topic: a publish-only transport.
         $dsn = \sprintf('qsrv://%s@%s:%d/%s', rawurlencode((string) getenv('QSRV_TEST_API_KEY')), $url['host'], $url['port'] ?? 80, rawurlencode($queue));
+        $dsn = rtrim($dsn, '/');
         $t = (new QsrvTransportFactory())->createTransport($dsn, $options + ['wait_time' => 0], $serializer ?? new PhpSerializer());
         self::assertInstanceOf(QsrvTransport::class, $t);
 
@@ -276,5 +279,40 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         $stats = $this->client->getQueue($q)->stats;
         self::assertSame(0, $stats->messages, 'handled are acked, failed are rejected (= acked)');
         self::assertSame(3, $stats->history);
+    }
+
+    public function testTopicPublishAndSubscribe(): void
+    {
+        $topic = $this->topicName();
+        $billing = $this->queueName();
+        $email = $this->queueName();
+        $producer = $this->transport('', ['topic' => $topic]);
+        $billingT = $this->transport($billing, ['subscribe' => [$topic]]);
+        $emailT = $this->transport($email, ['subscribe' => $topic]);
+        $billingT->setup(); // creates the queue and the topic, and subscribes
+        $emailT->setup();
+        $producer->setup(); // the topic already exists: kept
+
+        $sent = $producer->send(new Envelope(new DummyMessage('order 1'), [new QsrvGroupStamp('c42')]));
+        $stamp = $sent->last(QsrvPublishedStamp::class);
+        self::assertNotNull($stamp);
+        self::assertSame($topic, $stamp->topic);
+        self::assertEqualsCanonicalizing([$billing, $email], array_keys($stamp->messageIds));
+
+        foreach ([$billingT, $emailT] as $t) {
+            [$env] = self::all($t);
+            self::assertEquals(new DummyMessage('order 1'), $env->getMessage());
+            self::assertSame('c42', $env->last(QsrvReceivedStamp::class)?->groupId);
+            $t->ack($env);
+        }
+    }
+
+    public function testPublishToMissingTopicAutoCreatesIt(): void
+    {
+        $topic = $this->topicName();
+        $producer = $this->transport('', ['topic' => $topic]);
+        $sent = $producer->send(new Envelope(new DummyMessage('nobody listens')));
+        self::assertSame([], $sent->last(QsrvPublishedStamp::class)?->messageIds);
+        self::assertSame([], $this->client->getTopic($topic)->queues);
     }
 }

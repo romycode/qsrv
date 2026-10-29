@@ -203,4 +203,42 @@ final class ClientTest extends TestCase
         self::assertSame(['to' => 'dst', 'cursor' => 1000], $this->sentJson(1));
         self::assertNull($r->nextCursor);
     }
+
+    public function testTopics(): void
+    {
+        $c = $this->client([
+            new JsonMockResponse(['name' => 'orders', 'queues' => ['billing']], ['http_code' => 201]),
+            new JsonMockResponse(['name' => 'orders', 'queues' => ['billing', 'email']]),
+            new JsonMockResponse(['messages' => [
+                ['queue' => 'billing', 'id' => 'm1', 'attempts' => 0, 'enqueued_at' => '2026-10-29T19:33:00Z', 'group_id' => 'g'],
+                ['queue' => 'email', 'id' => 'm2', 'attempts' => 0, 'enqueued_at' => '2026-10-29T19:33:00Z', 'group_id' => 'g'],
+            ]], ['http_code' => 201]),
+            new JsonMockResponse(['topics' => [['name' => 'orders', 'queues' => ['billing', 'email']]]]),
+            new MockResponse('', ['http_code' => 204]),
+        ]);
+        self::assertSame(['billing'], $c->createTopic('orders', ['billing'])->queues);
+        self::assertSame(['queues' => ['billing']], $this->sentJson(0));
+        self::assertSame('PUT', $this->requests[0]['method']);
+
+        $t = $c->subscribe('orders', 'email');
+        self::assertSame('http://qsrv.test:8080/v1/topics/orders/subscriptions/email', $this->requests[1]['url']);
+        self::assertSame(['billing', 'email'], $t->queues);
+
+        $copies = $c->publish('orders', 'payload', groupId: 'g', delay: 2);
+        self::assertSame(['body' => 'payload', 'group_id' => 'g', 'delay' => '2000ms'], $this->sentJson(2));
+        self::assertSame(['billing', 'email'], array_keys($copies));
+        self::assertSame('m2', $copies['email']->id);
+        self::assertSame('payload', $copies['email']->body);
+
+        self::assertSame('orders', $c->listTopics()[0]->name);
+        $c->deleteTopic('orders');
+        self::assertSame('DELETE', $this->requests[4]['method']);
+    }
+
+    public function testCreateTopicWithoutQueuesSendsEmptyObject(): void
+    {
+        $c = $this->client([new JsonMockResponse(['name' => 't', 'queues' => []], ['http_code' => 201])]);
+        $c->createTopic('t');
+        self::assertSame('{}', $this->requests[0]['options']['body']);
+    }
 }

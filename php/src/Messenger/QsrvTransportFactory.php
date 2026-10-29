@@ -16,7 +16,11 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * DSN: qsrv://API_KEY@host:8080/queue (http) or qsrvs://API_KEY@host/queue (https).
  *
  * Options (DSN query string or transport `options`):
- *   queue         queue name, if not in the DSN path
+ *   queue         queue name, if not in the DSN path (optional with topic:
+ *                 then the transport only publishes)
+ *   topic         publish to this topic on send, instead of to the queue
+ *   subscribe     topics the queue subscribes to on setup (list, or comma
+ *                 separated in the DSN)
  *   api_key       API key, if not in the DSN user part
  *   wait_time     seconds get() long-polls, 0-20 (default 5)
  *   auto_setup    create the queue on first use if missing (default true)
@@ -31,7 +35,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  */
 final class QsrvTransportFactory implements TransportFactoryInterface
 {
-    private const OPTIONS = ['queue', 'api_key', 'wait_time', 'auto_setup', 'on_reject', 'timeout', 'queue_config'];
+    private const OPTIONS = ['queue', 'api_key', 'wait_time', 'auto_setup', 'on_reject', 'timeout', 'queue_config', 'topic', 'subscribe'];
 
     public function __construct(private readonly ?HttpClientInterface $httpClient = null)
     {
@@ -56,13 +60,15 @@ final class QsrvTransportFactory implements TransportFactoryInterface
             autoSetup: $c['auto_setup'],
             onReject: $c['on_reject'],
             queueConfig: $c['queue_config'],
+            topic: $c['topic'],
+            subscribe: $c['subscribe'],
         );
     }
 
     /**
      * @param array<string, mixed> $options
      *
-     * @return array{url: string, api_key: string, queue: string, wait_time: float, auto_setup: bool, on_reject: string, timeout: float, queue_config: QueueConfig}
+     * @return array{url: string, api_key: string, queue: string, wait_time: float, auto_setup: bool, on_reject: string, timeout: float, queue_config: QueueConfig, topic: ?string, subscribe: list<string>}
      *
      * @internal
      */
@@ -93,9 +99,22 @@ final class QsrvTransportFactory implements TransportFactoryInterface
             throw new InvalidArgumentException('qsrv: missing API key (qsrv://KEY@host/queue or the api_key option)');
         }
 
+        $topic = isset($all['topic']) && '' !== $all['topic'] ? (string) $all['topic'] : null;
+        $subscribe = $all['subscribe'] ?? [];
+        if (\is_string($subscribe)) {
+            $subscribe = array_map('trim', explode(',', $subscribe));
+        }
+        if (!\is_array($subscribe)) {
+            throw new InvalidArgumentException('qsrv: subscribe must be a list of topics');
+        }
+        $subscribe = array_values(array_filter(array_map('strval', $subscribe), static fn ($t) => '' !== $t));
+
         $queue = $all['queue'] ?? rawurldecode(trim($parts['path'] ?? '', '/'));
-        if ('' === $queue) {
-            throw new InvalidArgumentException('qsrv: missing queue name (qsrv://KEY@host/QUEUE or the queue option)');
+        if ('' === $queue && null === $topic) {
+            throw new InvalidArgumentException('qsrv: missing queue name (qsrv://KEY@host/QUEUE, the queue option, or a topic to publish to)');
+        }
+        if ('' === $queue && [] !== $subscribe) {
+            throw new InvalidArgumentException('qsrv: subscribe needs a queue');
         }
 
         $wait = (float) ($all['wait_time'] ?? 5);
@@ -122,6 +141,8 @@ final class QsrvTransportFactory implements TransportFactoryInterface
             'on_reject' => (string) ($all['on_reject'] ?? QsrvTransport::ON_REJECT_ACK),
             'timeout' => (float) ($all['timeout'] ?? 10),
             'queue_config' => QueueConfig::fromArray($qc),
+            'topic' => $topic,
+            'subscribe' => $subscribe,
         ];
     }
 }

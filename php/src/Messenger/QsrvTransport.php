@@ -24,10 +24,13 @@ use Symfony\Component\Messenger\Transport\SetupableTransportInterface;
 use Symfony\Component\Messenger\Transport\TransportInterface;
 
 /**
- * Symfony Messenger transport backed by one qsrv queue.
+ * Symfony Messenger transport backed by one qsrv queue and, optionally, topics.
  *
  * - send: one qsrv message per envelope (see WireFormat); DelayStamp maps to
- *   qsrv's delay, QsrvGroupStamp to its ordering group.
+ *   qsrv's delay, QsrvGroupStamp to its ordering group. With a `topic`, send
+ *   publishes there instead: every subscribed queue gets a copy.
+ * - setup: creates the queue, the `topic`, and the `subscribe` topics with
+ *   this queue subscribed to them.
  * - get: leases messages, long-polling up to wait_time seconds.
  * - ack: acks the lease. reject: acks too by default (Messenger already
  *   re-sent the message if it will be retried); with on_reject=nack the
@@ -48,7 +51,17 @@ final class QsrvTransport implements TransportInterface, MessageCountAwareInterf
         private readonly bool $autoSetup = true,
         private readonly string $onReject = self::ON_REJECT_ACK,
         private readonly QueueConfig $queueConfig = new QueueConfig(),
+        /** Publish here on send instead of sending to the queue. */
+        private readonly ?string $topic = null,
+        /** @var list<string> topics this queue subscribes to on setup */
+        private readonly array $subscribe = [],
     ) {
+        if ('' === $queue && null === $topic) {
+            throw new \InvalidArgumentException('qsrv: a transport needs a queue, a topic, or both');
+        }
+        if ('' === $queue && [] !== $subscribe) {
+            throw new \InvalidArgumentException('qsrv: "subscribe" needs a queue to subscribe');
+        }
         if (!\in_array($onReject, [self::ON_REJECT_ACK, self::ON_REJECT_NACK], true)) {
             throw new \InvalidArgumentException(\sprintf('qsrv: on_reject must be "ack" or "nack", got "%s"', $onReject));
         }
@@ -59,13 +72,23 @@ final class QsrvTransport implements TransportInterface, MessageCountAwareInterf
         return $this->queue;
     }
 
+    public function getTopicName(): ?string
+    {
+        return $this->topic;
+    }
+
     public function send(Envelope $envelope): Envelope
     {
-        $encoded = $this->serializer->encode($envelope);
-        $delay = ($envelope->last(DelayStamp::class)?->getDelay() ?? 0) / 1000;
+        $body = WireFormat::encode($this->serializer->encode($envelope));
+        $delay = max(0, ($envelope->last(DelayStamp::class)?->getDelay() ?? 0) / 1000);
         $group = $envelope->last(QsrvGroupStamp::class)?->groupId;
 
-        $message = $this->call(fn () => $this->client->send($this->queue, WireFormat::encode($encoded), $group, max(0, $delay)));
+        if (null !== $this->topic) {
+            $copies = $this->call(fn () => $this->client->publish($this->topic, $body, $group, $delay));
+
+            return $envelope->with(new QsrvPublishedStamp($this->topic, array_map(static fn ($m) => $m->id, $copies)));
+        }
+        $message = $this->call(fn () => $this->client->send($this->queue, $body, $group, $delay));
 
         return $envelope->with(new TransportMessageIdStamp($message->id));
     }
@@ -79,6 +102,7 @@ final class QsrvTransport implements TransportInterface, MessageCountAwareInterf
      */
     public function get(int $fetchSize = 1): iterable
     {
+        $this->requireQueue();
         for ($i = 0; $i < max(1, $fetchSize); ++$i) {
             $wait = 0 === $i ? $this->waitTime : 0;
             $delivery = $this->call(fn () => $this->client->receive($this->queue, $wait));
@@ -131,19 +155,49 @@ final class QsrvTransport implements TransportInterface, MessageCountAwareInterf
     /** Messages waiting to be consumed: ready, delayed or blocked behind their group (not in flight). */
     public function getMessageCount(): int
     {
+        if ('' === $this->queue) {
+            return 0; // send-only transport
+        }
         $stats = $this->call(fn () => $this->client->getQueue($this->queue))->stats;
 
         return max(0, $stats->messages - $stats->inFlight);
     }
 
-    /** Creates the queue (messenger:setup-transports). Existing queues are left as they are. */
+    /**
+     * messenger:setup-transports: creates the queue, the topic, and the
+     * subscribe topics with the queue subscribed. Existing ones are kept as
+     * they are (queue settings are not changed).
+     */
     public function setup(): void
     {
         try {
-            $this->client->createQueue($this->queue, $this->queueConfig);
-        } catch (QueueExistsException) {
+            if ('' !== $this->queue) {
+                $this->ignoreExists(fn () => $this->client->createQueue($this->queue, $this->queueConfig));
+            }
+            if (null !== $this->topic) {
+                $this->ignoreExists(fn () => $this->client->createTopic($this->topic));
+            }
+            foreach ($this->subscribe as $topic) {
+                $this->ignoreExists(fn () => $this->client->createTopic($topic));
+                $this->client->subscribe($topic, $this->queue);
+            }
         } catch (QsrvException $e) {
             throw new TransportException($e->getMessage(), 0, $e);
+        }
+    }
+
+    private function ignoreExists(callable $fn): void
+    {
+        try {
+            $fn();
+        } catch (QueueExistsException) { // queue or topic: same API code
+        }
+    }
+
+    private function requireQueue(): void
+    {
+        if ('' === $this->queue) {
+            throw new \LogicException(\sprintf('qsrv: this transport only publishes to topic "%s"; set a queue to consume', $this->topic));
         }
     }
 
@@ -172,6 +226,7 @@ final class QsrvTransport implements TransportInterface, MessageCountAwareInterf
 
     private function stamp(Envelope $envelope): QsrvReceivedStamp
     {
+        $this->requireQueue();
         return $envelope->last(QsrvReceivedStamp::class)
             ?? throw new \LogicException('qsrv: envelope was not received from a qsrv transport (no QsrvReceivedStamp)');
     }
