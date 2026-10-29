@@ -102,7 +102,7 @@ The single-node weak point is the disk. Options, from least to most effort:
 | PUT | `/queues/{name}` | create: `{"visibility_timeout":"30s","retry":{"max_attempts":5,"initial_backoff":"1s","max_backoff":"1m","multiplier":2},"dead_letter_queue":"dlq","ordering":"available","max_messages":0,"retention":"2160h"}` |
 | GET | `/queues/{name}` | config + stats (`history` = retained processed messages) |
 | DELETE | `/queues/{name}` | deletes live messages **and history**; refused (422) while it is another queue's DLQ |
-| POST | `/queues/{name}/messages` | `{"body":"text"}` or `{"body_base64":"..."}`, optional `"group_id"` |
+| POST | `/queues/{name}/messages` | `{"body":"text"}` or `{"body_base64":"..."}`, optional `"group_id"` and `"delay":"30s"` (max `720h`; deliverable after that, still FIFO by send order, and in a group it also waits for the messages before it) |
 | POST | `/queues/{name}/receive?wait=20s` | 200 delivery, 204 empty |
 | POST | `/queues/{name}/leases/{lease}/ack` | 204, 410 if lease gone |
 | POST | `/queues/{name}/leases/{lease}/nack` | 204, applies retry policy |
@@ -129,6 +129,32 @@ qctl replay -to orders-replay orders
 `QSRV_MESSAGE_ID/GROUP_ID/ATTEMPTS`, and on SIGINT lets running jobs finish.
 
 Go SDK: `github.com/romycode/qsrv/pkg/client`.
+
+## PHP and Symfony Messenger
+
+`composer require romycode/qsrv-php`: a PHP client and a Messenger transport
+(`qsrv://KEY@host:8080/queue`). See [php/README.md](php/README.md).
+
+## Releases
+
+The server and the PHP package are versioned independently:
+
+| tag in this repo | releases |
+|---|---|
+| `v0.4.0` | Go server and module (`github.com/romycode/qsrv@v0.4.0`) |
+| `php/v0.2.0` | PHP package `romycode/qsrv-php` `v0.2.0` |
+
+`php/` is developed here and published to the read-only mirror
+[romycode/qsrv-php](https://github.com/romycode/qsrv-php), which Packagist
+reads, with your own git credentials (no CI secrets), from an up-to-date `main`:
+
+```sh
+scripts/release-php.sh v0.2.0   # tags php/v0.2.0 here and v0.2.0 on the mirror
+scripts/release-php.sh --sync   # only refresh the mirror's main
+```
+
+The script refuses to publish anything that is not `origin/main`, and never
+force-pushes the mirror.
 
 ## Metrics and alerts
 
@@ -223,6 +249,8 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
   static cross-builds for linux/amd64, linux/arm64 and darwin/arm64.
 - **Tests**: `go test -race` with the WASM driver and with the cgo driver;
   coverage (`-coverpkg=./...`) on the WASM run, compared with the PR base.
+- **PHP**: unit tests plus integration tests against a real qsrv, for PHP
+  8.4 and 8.5 × Symfony 7.4 and 8.1.
 - **Performance**: the Go benchmarks, base vs head interleaved 6 times on
   the same runner and compared with `benchstat`, plus a `qbench` load test
   against a real server.

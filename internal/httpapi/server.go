@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -165,7 +166,11 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, http.StatusRequestEntityTooLarge, api.CodeBadRequest, "message too large")
 		return
 	}
-	m, err := q.Send(body, in.GroupID)
+	if d := in.Delay.D(); d < 0 || d > queue.MaxSendDelay {
+		writeAPIErr(w, http.StatusBadRequest, api.CodeBadRequest, fmt.Sprintf("delay must be between 0 and %s", queue.MaxSendDelay))
+		return
+	}
+	m, err := q.SendDelayed(body, in.GroupID, in.Delay.D())
 	if err != nil {
 		writeErr(w, err)
 		return

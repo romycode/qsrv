@@ -175,3 +175,27 @@ func isStatus(err error, code int) bool {
 	var ae *client.APIError
 	return errorsAs(err, &ae) && ae.Status == code
 }
+
+func TestSendDelay(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	c := client.New(srv.URL, key)
+	if _, err := c.CreateQueue(ctx, "q", api.QueueConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendWith(ctx, "q", []byte("x"), client.SendOptions{Delay: 200 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := c.Receive(ctx, "q", 0); err != nil || d != nil {
+		t.Fatalf("delayed message delivered early: %v %v", d, err)
+	}
+	d, err := c.Receive(ctx, "q", 5*time.Second)
+	if err != nil || d == nil || string(d.Message.Bytes()) != "x" {
+		t.Fatalf("got %v %v", d, err)
+	}
+	var ae *client.APIError
+	_, err = c.SendWith(ctx, "q", []byte("x"), client.SendOptions{Delay: 1000 * time.Hour})
+	if !errorsAs(err, &ae) || ae.Status != http.StatusBadRequest {
+		t.Fatalf("want 400 for delay over max, got %v", err)
+	}
+}

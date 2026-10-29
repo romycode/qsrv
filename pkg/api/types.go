@@ -67,6 +67,8 @@ type SendRequest struct {
 	Body       *string `json:"body,omitempty"`
 	BodyBase64 []byte  `json:"body_base64,omitempty"`
 	GroupID    string  `json:"group_id,omitempty"`
+	// Delay makes the message deliverable only after this long (max 720h).
+	Delay Duration `json:"delay,omitempty"`
 }
 
 // Message: Body is set when the payload is valid UTF-8, BodyBase64 otherwise.
