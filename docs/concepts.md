@@ -87,6 +87,33 @@ time. It keeps its send-order position and does not block later messages; in
 a group it also waits for the messages before it. Useful for scheduled work
 and for client-side retries (Symfony Messenger's retries use it).
 
+## Topics (fan-out)
+
+A queue is point to point: each message is processed by one consumer. When
+several services must each get every event, give each its own queue and
+**subscribe** those queues to a **topic**. Publishing to the topic inserts one
+copy of the message into every subscribed queue.
+
+```sh
+qctl create billing && qctl create email
+qctl topic create orders billing email        # or: qctl topic sub orders email
+echo '{"order_id": 1}' | qctl topic publish -group customer-42 orders
+```
+
+- **Atomic**: all copies are written in one transaction. Every subscriber
+  gets the message or none does: if one queue is full (`max_messages`) the
+  publish fails with `429` and no queue gets it.
+- **Independent copies**: each copy is an ordinary message of its queue (own
+  id), with that queue's visibility timeout, retries, DLQ, ordering groups,
+  retention and replay. A slow or failing subscriber doesn't affect the others.
+  `group_id` and `delay` apply in each queue.
+- **From now on**: a new subscription gets messages published after it, not
+  earlier ones (replay the publisher's history if you need them).
+- **No subscribers**: the publish succeeds and the message is dropped.
+- A subscribed queue can't be deleted: unsubscribe it first. Deleting a topic
+  keeps its queues and their messages. Up to 64 queues per topic.
+- Each copy stores the body, so a topic with N queues uses N times the space.
+
 ## History, retention and replay
 
 Ack does not delete. Processed messages stay in the database with their final
@@ -122,4 +149,5 @@ qctl replay -to orders-replay -group customer-42 -states acked orders
 ## Not included
 
 No batch endpoints, no deduplication, no per-key permissions (any valid API
-key can do everything), no priorities, no fan-out/pub-sub.
+key can do everything), no priorities, no content-based filtering on topics
+(every subscriber gets every message).

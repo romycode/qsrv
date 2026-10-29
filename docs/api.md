@@ -84,6 +84,40 @@ appears on replayed copies. Ids are 32 hex characters.
 All three return `410 lease_gone` if the lease expired or was already
 settled: the message may already be with another consumer.
 
+## Topics
+
+A topic copies each published message into its subscribed queues, atomically
+(see [concepts.md](concepts.md#topics-fan-out)). Topic and queue names are
+separate namespaces.
+
+| | | |
+|---|---|---|
+| `GET /v1/topics` | list | `200 {"topics":[{"name":"orders","queues":["billing","email"]}]}` |
+| `PUT /v1/topics/{topic}` `{"queues":["billing"]}` | create; `queues` optional, must exist | `201` topic · `409 already_exists` · `422` unknown queue |
+| `GET /v1/topics/{topic}` | | `200 {"name":"orders","queues":["billing","email"]}` |
+| `DELETE /v1/topics/{topic}` | queues and their messages stay | `204` |
+| `PUT /v1/topics/{topic}/subscriptions/{queue}` | subscribe (idempotent) | `200` topic · `422` unknown queue |
+| `DELETE /v1/topics/{topic}/subscriptions/{queue}` | unsubscribe (idempotent) | `200` topic |
+
+### Publish: `POST /v1/topics/{topic}/messages` → `201`
+
+Same body as a send (`body` / `body_base64`, `group_id`, `delay`). Returns
+the copy created in each queue:
+
+```sh
+qs $Q/v1/topics/orders/messages -d '{"body": "{\"order_id\":1}", "group_id": "customer-42"}'
+```
+
+```json
+{"messages": [
+  {"queue": "billing", "id": "9a1c...", "group_id": "customer-42", "body": "{\"order_id\":1}", "attempts": 0, "enqueued_at": "..."},
+  {"queue": "email",   "id": "4be0...", "group_id": "customer-42", "body": "{\"order_id\":1}", "attempts": 0, "enqueued_at": "..."}
+]}
+```
+
+`messages` is empty when the topic has no subscriptions. `429 queue_full` if
+any subscribed queue is full: then no queue gets the message.
+
 ## Replay: `POST /v1/queues/{name}/replay` → `200`
 
 ```sh
@@ -106,10 +140,10 @@ default 1000, max 10000. Each page is atomic.
 |---|---|---|
 | 400 | `bad_request` | malformed request, bad duration, both or neither body fields |
 | 401 | `unauthorized` | missing or wrong API key |
-| 404 | `not_found` | queue doesn't exist |
-| 409 | `already_exists` | create of an existing queue |
+| 404 | `not_found` | queue or topic doesn't exist |
+| 409 | `already_exists` | create of an existing queue or topic |
 | 410 | `lease_gone` | lease expired or already settled |
 | 413 | `bad_request` | message larger than `-max-message-bytes` |
-| 422 | `invalid_config` | invalid queue settings or message |
+| 422 | `invalid_config` | invalid settings or message; deleting a queue that is a DLQ or subscribed to a topic |
 | 429 | `queue_full` | `max_messages` reached: back off and retry |
 | 503 | `unavailable` | shutting down |
