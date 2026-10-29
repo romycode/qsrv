@@ -8,8 +8,8 @@ composer require romycode/qsrv-php
 ```
 
 Developed in the `php/` directory of [romycode/qsrv](https://github.com/romycode/qsrv)
-and published to the read-only mirror [romycode/qsrv-php](https://github.com/romycode/qsrv-php),
-which Packagist reads. Issues and pull requests go to romycode/qsrv. The PHP
+and published with `scripts/release-php.sh` to the read-only mirror
+[romycode/qsrv-php](https://github.com/romycode/qsrv-php), which Packagist reads. Issues and pull requests go to romycode/qsrv. The PHP
 package has its own versions, independent of the server's.
 
 ## Client
