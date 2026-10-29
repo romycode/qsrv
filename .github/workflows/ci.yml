@@ -184,6 +184,8 @@ jobs:
               echo "Go benchmarks, $COUNT runs (no base to compare against)."
             fi
             echo
+            cat .github/ci/bench-guide.md
+            echo
             echo '<details open><summary>benchstat</summary>'
             echo
             echo '```'
