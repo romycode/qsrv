@@ -152,8 +152,8 @@ final class QsrvTransport implements TransportInterface, MessageCountAwareInterf
         try {
             $envelope = $this->serializer->decode(WireFormat::decode($delivery->message->body));
         } catch (MessageDecodingFailedException $e) {
-            // Messenger < 8.1 throws here (8.1+ returns a stamped envelope that the
-            // worker handles). Let qsrv's retry policy / dead-letter queue deal with
+            // Messenger < 8.1 throws here (8.1+ returns an envelope wrapping the
+            // exception, which the worker handles). Let qsrv's retry policy / dead-letter queue deal with
             // poison messages; either way the body stays in qsrv's history for replay.
             try {
                 $this->client->nack($this->queue, $delivery->leaseId);

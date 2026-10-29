@@ -19,7 +19,6 @@ use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
-use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
@@ -211,10 +210,10 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         $t = $this->transport($q);
 
         if (method_exists(MessageDecodingFailedException::class, 'wrap')) {
-            // Messenger 8.1+: the serializer returns a stamped envelope and the
-            // worker handles it like any failure (retry / failure transport).
+            // Messenger 8.1+: the serializer returns an envelope whose message is
+            // the decoding exception; the worker handles it like any failure.
             [$env] = self::all($t);
-            self::assertNotNull($env->last(MessageDecodingFailedStamp::class));
+            self::assertInstanceOf(MessageDecodingFailedException::class, $env->getMessage());
             self::assertNotNull($env->last(QsrvReceivedStamp::class));
             $t->reject($env);
             self::assertSame(0, $this->client->getQueue($q)->stats->messages);

@@ -129,8 +129,8 @@ Either way, processed messages stay in qsrv's history and can be replayed.
 
 With Messenger 7.4 the transport nacks them, so qsrv's retry policy and
 dead-letter queue take care of them. With Messenger 8.1+ the serializer
-returns an envelope stamped `MessageDecodingFailedStamp` and the worker treats
-it like any failed message (retries, then `failure_transport`).
+returns an envelope whose message is the `MessageDecodingFailedException`, and
+the worker treats it like any failed message (retries, then `failure_transport`).
 
 ### Long handlers
 
