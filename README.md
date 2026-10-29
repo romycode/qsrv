@@ -52,7 +52,7 @@ Replayed copies are themselves history of the destination once processed.
 
 ## Run
 
-Pure Go by default: SQLite runs as WASM inside the wazero runtime
+Requires Go 1.27+. Pure Go by default: SQLite runs as WASM inside the wazero runtime
 (`ncruces/go-sqlite3`), so builds are static and cross-compile anywhere.
 The first start compiles SQLite to native code (~1-1.5s) and caches it in
 `data-dir/.wasmcache`; later starts take ~50ms.
@@ -196,6 +196,42 @@ tail latencies will be worse):
 Server CPU ≈ 0.5ms per full message cycle (3 HTTP requests); RSS ~20-30MB.
 Storage: ~body size + ~150 bytes per message; 50k/day of 1KB ≈ 60MB/day of
 history, ~5.5GB at the default 90-day retention.
+
+Go benchmarks (in-process, real fsync) live in `internal/queue/perf_bench_test.go`
+and `internal/httpapi/bench_test.go`:
+
+```sh
+go test -run '^$' -bench . -benchmem ./...            # all
+go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.txt new.txt
+```
+
+| benchmark | measures |
+|---|---|
+| `Send/body=…` | durable send throughput, 8×GOMAXPROCS producers, 128B/1KiB/16KiB |
+| `SendSequential` | single producer: per-op durable send cost (no group commit help) |
+| `ReceiveAck` | draining a backlog: receive (body read) + durable ack |
+| `PersistentCycle` / `GroupsCycle` | send+receive+ack; the latter with 64 ordering groups |
+| `Replay` | re-enqueue history, 1000-message pages (`msgs/s` metric) |
+| `Open10kLive` | startup with 10k live messages |
+| `HTTPCycle` | full cycle through HTTP + auth + Go client |
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every PR:
+
+- **Lint & build**: gofmt, `go vet` (both drivers), `go mod verify`,
+  static cross-builds for linux/amd64, linux/arm64 and darwin/arm64.
+- **Tests**: `go test -race` with the WASM driver and with the cgo driver;
+  coverage (`-coverpkg=./...`) on the WASM run, compared with the PR base.
+- **Performance**: the Go benchmarks, base vs head interleaved 5 times on
+  the same runner and compared with `benchstat`, plus a `qbench` load test
+  against a real server.
+- **PR report**: one comment per PR, updated on each push, with test
+  results, coverage per package (with delta) and performance. The same
+  content goes to each run's job summary.
+
+Benchmarks report, they never fail the build: CI runners share disks and
+fsync timing is noisy.
 
 ## Limits / not included
 
