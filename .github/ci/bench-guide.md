@@ -37,6 +37,20 @@
 
 Para pasar `sec/op` a operaciones por segundo: 1 / sec/op. Por ejemplo, 400µs ≈ 2.500 ops/s.
 
-**qbench** (desplegable de abajo): servidor real arrancado en el runner, carga por HTTP. `ops/s` es el throughput conseguido. `p50`/`p90`/`p99` son latencias: el 50/90/99% de las peticiones tardó menos que eso. `end2end` va desde que se envía hasta que se hace ack. La prueba de 50 msg/s muestra la latencia con carga normal: es la que más se parece a tu uso real.
+**qbench** (desplegable de abajo): arranca un qsrv real en el runner y le mete carga por HTTP con el cliente Go. Son dos pruebas:
+
+1. **max throughput**: productores y consumidores a tope. Mira `ops/s` de `ack`: son los mensajes **completos** por segundo (enviados, recibidos y confirmados). Es el techo del servidor en esa máquina.
+2. **steady load (50 msg/s)**: carga fija, unas 80 veces tu volumen real, con 20 grupos de orden. Mira `end2end`: es la latencia que verías en producción.
+
+| fila | qué es |
+|---|---|
+| `send` / `receive` / `ack` | cada petición HTTP por separado |
+| `end2end` | desde que se envía el mensaje hasta que se hace ack: lo que vive un mensaje en la cola |
+| `p50` / `p90` / `p99` | el 50/90/99% de las peticiones tardó menos que eso; `p99` = el peor 1% |
+
+- `receive` alto en steady load es **normal**: es long-polling y espera a que llegue un mensaje.
+- `backlog at end` > 0 en max throughput significa que los productores van más rápido que los consumidores. En ese caso `end2end` incluye el tiempo en cola y no mide la latencia del servidor.
+- `errors` tiene que ser 0. Si no lo es, qbench sale con error, el comentario muestra `QBENCH FAILED` y el job falla.
+- qbench solo corre sobre este PR, sin comparación con `main`, y los números dependen del disco del runner. Úsalo para ver órdenes de magnitud, no diferencias pequeñas.
 
 </details>

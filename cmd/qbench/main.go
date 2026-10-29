@@ -186,6 +186,9 @@ func main() {
 	fmt.Printf("\nerrors: send=%d receive=%d ack=%d | empty polls=%d | backlog at end=%d\n",
 		sendErr.Load(), recvErr.Load(), ackErr.Load(), empty.Load(), info.Stats.Messages)
 	fmt.Println("end2end = send start -> ack done (includes queueing time when consumers lag)")
+	if sendErr.Load()+recvErr.Load()+ackErr.Load() > 0 {
+		os.Exit(1) // results above are still printed; CI treats errors as failure
+	}
 }
 
 func rateStr(r float64) string {
