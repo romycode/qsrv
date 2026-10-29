@@ -39,6 +39,39 @@ export QSRV_API_KEYS=$(openssl rand -hex 32)      # comma-separated, ≥32 chars
 Key rotation: add the new key, roll clients, remove the old key, restart.
 SIGTERM: long-polls get 503 immediately, pending writes commit, exit 0.
 
+## Docker
+
+Multi-arch image (`linux/amd64`, `linux/arm64`) on GitHub Container Registry,
+built from the `Dockerfile`: static binary on `distroless/static`, non-root,
+no shell. It contains `qsrv` and `qctl`.
+
+| tag | |
+|---|---|
+| `latest`, `X`, `X.Y`, `X.Y.Z` | releases (`vX.Y.Z` tags; `X` only from 1.0) |
+| `edge`, `sha-<commit>` | every push to `main` |
+
+```sh
+docker run -d --name qsrv -p 8080:8080 \
+  -e QSRV_API_KEYS=$(openssl rand -hex 32) \
+  -v qsrv-data:/data \
+  ghcr.io/romycode/qsrv:latest
+```
+
+- **Data**: `/data` (volume). It holds `qsrv.db` and the compiled-SQLite cache;
+  one container per volume.
+- **Config**: same flags as the binary (`docker run ... ghcr.io/romycode/qsrv -retention-check 5m`)
+  or env vars. The image sets `QSRV_ADDR=:8080`, `QSRV_DATA_DIR=/data` and
+  `QSRV_METRICS_ADDR=:9464` (metrics have no auth: don't publish 9464
+  beyond your network). Prefer `QSRV_API_KEYS_FILE` with a mounted secret
+  over keys in the environment.
+- **Health**: built-in `HEALTHCHECK` (`qsrv -healthcheck`, which probes
+  `/healthz`). For Kubernetes use `httpGet /healthz` on 8080.
+- **Shutdown**: SIGTERM commits pending writes; give it a grace period
+  (`docker stop -t 30`, `stop_grace_period`).
+- **CLI inside**: `docker exec -e QSRV_ADDR=http://127.0.0.1:8080 -e QSRV_API_KEY=... qsrv qctl queues`.
+
+Compose file with a volume and private metrics: [deploy/docker-compose.yml](../deploy/docker-compose.yml).
+
 ## Backups
 
 The single-node weak point is the disk. Options, from least to most effort:

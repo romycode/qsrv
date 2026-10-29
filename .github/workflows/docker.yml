@@ -1,0 +1,102 @@
+name: Docker
+
+# Image: ghcr.io/romycode/qsrv (linux/amd64, linux/arm64).
+#   PRs           build both platforms and smoke-test the amd64 image, no push
+#   push to main  :edge and :sha-<short>
+#   tag vX.Y.Z    :X.Y.Z, :X.Y, :X and :latest
+# Uses the workflow's own GITHUB_TOKEN: no secrets to configure.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: docker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=edge,branch=main
+            type=sha,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=ref,event=pr
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="${GITHUB_SHA::12}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # Smoke test first: the amd64 image, loaded locally, must start, report
+      # healthy and serve a full send/receive/ack cycle.
+      - name: Build for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: qsrv:test
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          key=$(openssl rand -hex 32)
+          docker run -d --name qsrv -p 18080:8080 -e QSRV_API_KEYS=$key qsrv:test
+          for _ in $(seq 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' qsrv)" = healthy ] && break; sleep 1
+          done
+          docker inspect -f 'health: {{.State.Health.Status}}' qsrv
+          [ "$(docker inspect -f '{{.State.Health.Status}}' qsrv)" = healthy ] || { docker logs qsrv; exit 1; }
+          docker exec qsrv qsrv -version
+          q() { docker exec -e QSRV_ADDR=http://127.0.0.1:8080 -e QSRV_API_KEY=$key qsrv qctl "$@"; }
+          q create smoke
+          echo hello | docker exec -i -e QSRV_ADDR=http://127.0.0.1:8080 -e QSRV_API_KEY=$key qsrv qctl send smoke
+          body=$(q recv -ack -raw smoke 2>/dev/null)
+          [ "$body" = hello ] || { echo "got: $body"; docker logs qsrv; exit 1; }
+          curl -sf http://127.0.0.1:18080/healthz
+          docker stop -t 30 qsrv && docker logs qsrv 2>&1 | tail -3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build all platforms${{ github.event_name != 'pull_request' && ' and push' || '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+

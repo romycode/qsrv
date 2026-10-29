@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	cryptotls "crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,8 +44,18 @@ func run() error {
 		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
 		metricsAddr = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
 		logLevel    = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")
+		healthcheck = flag.Bool("healthcheck", false, "probe GET /healthz on -addr and exit 0 if healthy (for container health checks)")
+		showVersion = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return nil
+	}
+	if *healthcheck {
+		return probe(*addr, *tlsCert != "")
+	}
 
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(*logLevel)); err != nil {
@@ -164,4 +175,33 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// probe checks /healthz of the server listening on addr (images without a
+// shell or curl use it as their health check). With TLS it skips certificate
+// verification: it only talks to localhost.
+func probe(addr string, tls bool) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	scheme := "http"
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if tls {
+		scheme = "https"
+		tr.TLSClientConfig = &cryptotls.Config{InsecureSkipVerify: true} //nolint:gosec // localhost probe
+	}
+	hc := &http.Client{Timeout: 3 * time.Second, Transport: tr}
+	resp, err := hc.Get(scheme + "://" + net.JoinHostPort(host, port) + "/healthz")
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: status %d", resp.StatusCode)
+	}
+	return nil
 }
