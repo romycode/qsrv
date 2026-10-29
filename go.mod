@@ -1,6 +1,6 @@
 module github.com/romycode/qsrv
 
-go 1.24.7
+go 1.27.0
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.52

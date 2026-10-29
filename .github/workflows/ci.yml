@@ -1,0 +1,276 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.27.x"
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+jobs:
+  lint:
+    name: Lint & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "::error::not gofmt-ed:"; echo "$out"; exit 1; fi
+      - run: go mod verify
+      - run: go vet ./... ./.github/ci/...
+      - run: go vet -tags sqlite_cgo ./...
+      - name: Cross-compile (pure Go, static)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -o /dev/null ./cmd/...
+            echo "built $target"
+          done
+
+  test:
+    name: Tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: SQLite WASM
+            id: wasm
+            tags: ""
+            coverage: true
+          - name: SQLite cgo
+            id: cgo
+            tags: sqlite_cgo
+            coverage: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      # SQLite compiled from WASM to native code; compiling it under -race
+      # takes ~15s per test binary. Keyed by go.sum like the test helper.
+      - uses: actions/cache@v6
+        if: matrix.id == 'wasm'
+        with:
+          path: ~/.cache/qsrv-test
+          key: qsrv-wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}
+
+      - name: go test -race
+        id: test
+        env:
+          COVER_FLAGS: ${{ matrix.coverage && '-covermode=atomic -coverpkg=./... -coverprofile=coverage.out' || '' }}
+        run: |
+          # -race needs cgo; the driver is chosen by build tag, not CGO_ENABLED.
+          if go test -race -count=1 -timeout=10m -tags="${{ matrix.tags }}" $COVER_FLAGS -json ./... > test.json; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Base coverage (PR only)
+        if: matrix.coverage && github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git worktree add ../base FETCH_HEAD
+          cd ../base
+          go test -count=1 -timeout=10m -covermode=atomic -coverpkg=./... -coverprofile="$GITHUB_WORKSPACE/base.out" ./... > /dev/null
+
+      - name: Report
+        if: always()
+        run: |
+          mkdir -p reports
+          go run ./.github/ci/report tests -title "Tests · ${{ matrix.name }}" test.json > "reports/20-tests-${{ matrix.id }}.md"
+          if [ "${{ matrix.coverage }}" = "true" ] && [ -f coverage.out ]; then
+            go run ./.github/ci/report coverage -head coverage.out -base base.out > reports/30-coverage.md
+            go tool cover -html=coverage.out -o coverage.html
+          fi
+          cat reports/*.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-test-${{ matrix.id }}
+          path: reports/
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.coverage
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+          if-no-files-found: ignore
+
+      - name: Fail on test failures
+        if: steps.test.outputs.ok != 'true'
+        run: |
+          echo "::error::tests failed (see the job summary or the PR comment)"
+          exit 1
+
+  bench:
+    name: Performance
+    runs-on: ubuntu-latest
+    env:
+      COUNT: "6"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Prepare base (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git worktree add ../base FETCH_HEAD
+
+      - name: Go benchmarks (base vs head, interleaved)
+        run: |
+          bench() { go test -run='^$' -bench=. -benchmem -count=1 -timeout=20m ./... ; }
+          touch base.txt head.txt
+          # Interleave runs so runner noise hits both sides equally.
+          for i in $(seq "$COUNT"); do
+            echo "::group::round $i"
+            bench | tee -a head.txt
+            if [ -d ../base ]; then (cd ../base && bench) >> base.txt || echo "base run failed"; fi
+            echo "::endgroup::"
+          done
+          if grep -q '^Benchmark' base.txt; then
+            benchstat base=base.txt head=head.txt > benchstat.txt
+          else
+            benchstat head.txt > benchstat.txt
+          fi
+          cat benchstat.txt
+
+      - name: Load test over HTTP (qbench)
+        run: |
+          CGO_ENABLED=0 go build -o bin/ ./cmd/qsrv ./cmd/qbench
+          # Two statements on purpose: in `export A=x B=$A`, $A expands before A is set.
+          export QSRV_API_KEYS=$(openssl rand -hex 32)
+          export QSRV_API_KEY="$QSRV_API_KEYS" QSRV_ADDR=http://127.0.0.1:18080
+          data=$(mktemp -d)
+          bin/qsrv -addr 127.0.0.1:18080 -data-dir "$data" -metrics-addr "" -log-level warn 2> qsrv.log &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && break; sleep 0.1; done
+          curl -sf http://127.0.0.1:18080/healthz >/dev/null || { echo "qsrv did not start"; cat qsrv.log; exit 1; }
+          run() {
+            echo "## $1"
+            shift
+            if ! bin/qbench "$@" 2>&1; then echo "QBENCH FAILED"; return 1; fi
+            echo
+          }
+          : > qbench.txt
+          run "max throughput: 8 producers / 16 consumers, 1 KiB, 20s" -producers 8 -consumers 16 -size 1024 -duration 20s | tee -a qbench.txt
+          run "steady load: 50 msg/s, 1 KiB, 20 ordering groups, 20s" -rate 50 -groups 20 -size 1024 -duration 20s | tee -a qbench.txt
+
+      - name: Report
+        if: always()
+        run: |
+          mkdir -p reports
+          {
+            echo "#### ⚡ Performance"
+            echo
+            if [ -s base.txt ] && grep -q '^Benchmark' base.txt; then
+              echo "Go benchmarks, base vs head, $COUNT interleaved runs on the same runner. Shared CI disks are noisy: treat changes under ~10% (or marked \`~\`) as noise."
+            else
+              echo "Go benchmarks, $COUNT runs (no base to compare against)."
+            fi
+            echo
+            cat .github/ci/bench-guide.md
+            echo
+            echo '<details open><summary>benchstat</summary>'
+            echo
+            echo '```'
+            cat benchstat.txt 2>/dev/null || echo "benchmarks did not run"
+            echo '```'
+            echo '</details>'
+            echo
+            echo '<details><summary>qbench over HTTP (real server, real fsync)</summary>'
+            echo
+            echo '```'
+            cat qbench.txt 2>/dev/null || echo "qbench did not run"
+            echo '```'
+            echo '</details>'
+            echo
+          } > reports/40-bench.md
+          cat reports/40-bench.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-bench
+          path: reports/
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bench-raw
+          path: |
+            base.txt
+            head.txt
+            benchstat.txt
+            qbench.txt
+          if-no-files-found: ignore
+
+  report:
+    name: PR report
+    needs: [lint, test, bench]
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: report-*
+          path: reports
+          merge-multiple: true
+      - name: Build comment
+        env:
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          BENCH: ${{ needs.bench.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          icon() { case "$1" in success) echo "✅";; failure) echo "❌";; cancelled) echo "⏹️";; *) echo "⚪";; esac; }
+          {
+            echo "<!-- qsrv-ci-report -->"
+            echo "### CI report for \`${HEAD_SHA:0:7}\`"
+            echo
+            echo "$(icon "$LINT") lint & build · $(icon "$TEST") tests · $(icon "$BENCH") performance · [run]($RUN_URL)"
+            echo
+            cat reports/*.md 2>/dev/null
+          } > comment.md
+      - name: Upsert PR comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const body = require('fs').readFileSync('comment.md', 'utf8');
+            const marker = '<!-- qsrv-ci-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const mine = comments.find(c => c.user.type === 'Bot' && c.body.startsWith(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
