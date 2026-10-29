@@ -84,9 +84,21 @@ func (c *Client) DeleteQueue(ctx context.Context, name string) error {
 
 // Send enqueues body. groupID is optional ("" = no ordering group).
 func (c *Client) Send(ctx context.Context, queue string, body []byte, groupID string) (api.Message, error) {
+	return c.SendWith(ctx, queue, body, SendOptions{GroupID: groupID})
+}
+
+// SendOptions are the optional parameters of a send.
+type SendOptions struct {
+	GroupID string        // ordering group ("" = none)
+	Delay   time.Duration // deliverable only after this long (max 720h)
+}
+
+// SendWith enqueues body with options.
+func (c *Client) SendWith(ctx context.Context, queue string, body []byte, o SendOptions) (api.Message, error) {
 	text, raw := api.EncodeBody(body)
 	var out api.Message
-	err := c.do(ctx, http.MethodPost, qpath(queue, "/messages"), api.SendRequest{Body: text, BodyBase64: raw, GroupID: groupID}, &out)
+	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay)}
+	err := c.do(ctx, http.MethodPost, qpath(queue, "/messages"), in, &out)
 	return out, err
 }
 

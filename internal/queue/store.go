@@ -266,8 +266,8 @@ func apply(tx *sql.Tx, o *op) error {
 		return err
 	case opInsert:
 		m := &o.msg
-		_, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of)
-			VALUES (?, ?, ?, ?, ?, ?, 0, ?)`, o.queue, m.ID, m.Seq, m.GroupID, m.Body, ns(m.EnqueuedAt), m.ReplayOf)
+		_, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, available_at, replay_of)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.queue, m.ID, m.Seq, m.GroupID, m.Body, ns(m.EnqueuedAt), m.State, ns(m.AvailableAt), m.ReplayOf)
 		return err
 	case opDeliver:
 		res, err = tx.Exec(`UPDATE messages SET attempts = attempts + 1, state = ?, lease_id = ?, deadline = ?

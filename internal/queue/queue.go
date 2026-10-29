@@ -22,6 +22,9 @@ var (
 
 const MaxGroupIDLen = 128
 
+// MaxSendDelay caps how far in the future a send can schedule a message.
+const MaxSendDelay = 30 * 24 * time.Hour
+
 type Clock interface{ Now() time.Time }
 
 type realClock struct{}
@@ -144,7 +147,14 @@ func (q *Queue) Name() string   { return q.name }
 func (q *Queue) Config() Config { return q.cfg }
 
 func (q *Queue) Send(body []byte, groupID string) (Message, error) {
-	if len(groupID) > MaxGroupIDLen {
+	return q.SendDelayed(body, groupID, 0)
+}
+
+// SendDelayed enqueues a message that becomes deliverable after delay. Its
+// FIFO position is still its send order. In a group it also waits for the
+// messages before it: it is delivered once it is the group head and due.
+func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (Message, error) {
+	if len(groupID) > MaxGroupIDLen || delay < 0 || delay > MaxSendDelay {
 		return Message{}, ErrInvalidMessage
 	}
 	body = append([]byte(nil), body...)
@@ -162,10 +172,14 @@ func (q *Queue) Send(body []byte, groupID string) (Message, error) {
 		return Message{}, ErrQueueFull
 	}
 	q.seq++
-	m := &Message{ID: newID(), GroupID: groupID, EnqueuedAt: q.b.clock.Now(), seq: q.seq}
-	pos := q.b.store.append(op{kind: opInsert, queue: q.name, msg: msgRecord{
-		ID: m.ID, GroupID: groupID, Body: body, EnqueuedAt: m.EnqueuedAt, Seq: m.seq,
-	}})
+	now := q.b.clock.Now()
+	m := &Message{ID: newID(), GroupID: groupID, EnqueuedAt: now, seq: q.seq}
+	rec := msgRecord{ID: m.ID, GroupID: groupID, Body: body, EnqueuedAt: now, Seq: m.seq}
+	if delay > 0 {
+		m.availableAt = now.Add(delay)
+		rec.State, rec.AvailableAt = stateDelayed, m.availableAt
+	}
+	pos := q.b.store.append(op{kind: opInsert, queue: q.name, msg: rec})
 	q.addLocked(m)
 	out := m.public()
 	q.mu.Unlock()
@@ -457,9 +471,22 @@ func (q *Queue) addLocked(m *Message) {
 	q.order = append(q.order, m)
 	m.state = stateReady
 	if q.attachLocked(m) {
-		heap.Push(q.ready, m)
-		q.signalLocked()
+		q.scheduleLocked(m, q.b.clock.Now())
 	}
+}
+
+// scheduleLocked makes a message that may be delivered (not blocked by its
+// group) ready, or delayed if it has a future availableAt.
+func (q *Queue) scheduleLocked(m *Message, now time.Time) {
+	if m.availableAt.After(now) {
+		m.state = stateDelayed
+		heap.Push(q.delayed, m)
+		q.signalLocked() // long-pollers re-arm their timer for the new due time
+		return
+	}
+	m.state, m.availableAt = stateReady, time.Time{}
+	heap.Push(q.ready, m)
+	q.signalLocked()
 }
 
 // finishLocked removes a message for good and unblocks its group.
@@ -481,8 +508,7 @@ func (q *Queue) finishLocked(m *Message) {
 		delete(q.groups, g.key)
 		return
 	}
-	heap.Push(q.ready, g.msgs[0])
-	q.signalLocked()
+	q.scheduleLocked(g.msgs[0], q.b.clock.Now())
 }
 
 // signalLocked wakes every long-poller (close-and-replace broadcast).
@@ -595,6 +621,9 @@ func (q *Queue) flushDead(msgs []*Message) {
 func (q *Queue) restore(lq *loadedQueue) {
 	for _, r := range lq.msgs {
 		m := &Message{ID: r.ID, GroupID: r.GroupID, Attempts: r.Attempts, EnqueuedAt: r.EnqueuedAt, ReplayOf: r.ReplayOf, seq: r.Seq, state: stateReady}
+		if r.State == stateDelayed {
+			m.availableAt = r.AvailableAt // kept for non-heads: applies once they become head
+		}
 		q.msgs[m.ID] = m
 		q.order = append(q.order, m)
 		if !q.attachLocked(m) {
