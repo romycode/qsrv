@@ -78,7 +78,7 @@ appears on replayed copies. Ids are 32 hex characters.
 | | |
 |---|---|
 | `POST /v1/queues/{name}/leases/{lease}/ack` | `204` processed |
-| `POST /v1/queues/{name}/leases/{lease}/nack` | `204` failed: retry policy applies |
+| `POST /v1/queues/{name}/leases/{lease}/nack` | `204` failed: retry policy applies. With `{"dead_letter": true}` it skips retries: straight to the DLQ (dropped if none) |
 | `POST /v1/queues/{name}/leases/{lease}/extend` `{"by":"1m"}` | `200 {"expires_at": ...}`; body optional (default: visibility timeout) |
 
 All three return `410 lease_gone` if the lease expired or was already

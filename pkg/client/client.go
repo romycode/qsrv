@@ -125,6 +125,13 @@ func (c *Client) Nack(ctx context.Context, queue, lease string) error {
 	return c.do(ctx, http.MethodPost, qpath(queue, "/leases/"+url.PathEscape(lease)+"/nack"), nil, nil)
 }
 
+// DeadLetter fails the message without retrying: it goes to the queue's dead
+// letter queue now (dropped if there is none). Use it for failures that a
+// retry can't fix, like a payload that can't be decoded.
+func (c *Client) DeadLetter(ctx context.Context, queue, lease string) error {
+	return c.do(ctx, http.MethodPost, qpath(queue, "/leases/"+url.PathEscape(lease)+"/nack"), api.NackRequest{DeadLetter: true}, nil)
+}
+
 // Extend pushes the lease deadline to now+by (0 = queue visibility timeout).
 func (c *Client) Extend(ctx context.Context, queue, lease string, by time.Duration) (time.Time, error) {
 	var out api.ExtendResponse

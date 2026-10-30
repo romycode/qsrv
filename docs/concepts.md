@@ -28,6 +28,8 @@ Receiving a message does not remove it: it **leases** it for the queue's
 
 - **ack**: processed. It leaves the queue and becomes history.
 - **nack**: failed. The retry policy decides when it is delivered again.
+  `nack` with `dead_letter` skips the retries and sends it to the DLQ now:
+  for failures a retry can't fix (a payload that can't be decoded).
 - **extend**: heartbeat for long jobs; the lease now ends `by` from now
   (default: the visibility timeout again).
 

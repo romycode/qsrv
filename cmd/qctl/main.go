@@ -40,7 +40,7 @@ Commands:
   send [-group G] [-delay D] QUEUE [BODY|-]  send BODY, or stdin if omitted or "-"
   recv [-wait D] [-ack] [-raw] QUEUE  lease one message (exit 3 if empty)
   ack QUEUE LEASE
-  nack QUEUE LEASE
+  nack [-dead-letter] QUEUE LEASE     failed: retry policy, or straight to the DLQ
   extend [-by D] QUEUE LEASE
   consume [flags] QUEUE -- CMD [ARGS] run CMD per message: body on stdin,
                                       exit 0 = ack, otherwise nack
@@ -87,7 +87,16 @@ func main() {
 	case "ack":
 		err = withLease(args, func(q, l string) error { return c.Ack(ctx, q, l) })
 	case "nack":
-		err = withLease(args, func(q, l string) error { return c.Nack(ctx, q, l) })
+		deadLetter := len(args) > 0 && args[0] == "-dead-letter"
+		if deadLetter {
+			args = args[1:]
+		}
+		err = withLease(args, func(q, l string) error {
+			if deadLetter {
+				return c.DeadLetter(ctx, q, l)
+			}
+			return c.Nack(ctx, q, l)
+		})
 	case "extend":
 		err = cmdExtend(ctx, c, args)
 	case "consume":
