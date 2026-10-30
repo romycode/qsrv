@@ -105,6 +105,13 @@ type Delivery struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// NackRequest is the optional body of a nack.
+type NackRequest struct {
+	// DeadLetter skips the retry policy: the message goes to the dead letter
+	// queue now (dropped if the queue has none).
+	DeadLetter bool `json:"dead_letter,omitempty"`
+}
+
 type ExtendRequest struct {
 	By Duration `json:"by,omitempty"` // 0 = queue visibility timeout
 }

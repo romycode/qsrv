@@ -258,3 +258,29 @@ func hasStatus(err error, status int) bool {
 	var ae *client.APIError
 	return errorsAs(err, &ae) && ae.Status == status
 }
+
+func TestNackDeadLetter(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	c := client.New(srv.URL, key)
+	c.CreateQueue(ctx, "dlq", api.QueueConfig{})
+	c.CreateQueue(ctx, "q", api.QueueConfig{DeadLetterQueue: "dlq", Retry: &api.RetryPolicy{MaxAttempts: 5}})
+	c.Send(ctx, "q", []byte("bad"), "")
+	d, _ := c.Receive(ctx, "q", 0)
+	if err := c.DeadLetter(ctx, "q", d.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Receive(ctx, "dlq", 0); got == nil || string(got.Message.Bytes()) != "bad" {
+		t.Fatalf("dlq: %+v", got)
+	}
+	if again, _ := c.Receive(ctx, "q", 0); again != nil {
+		t.Fatal("dead-lettered message was retried")
+	}
+	// A plain nack (no body) still applies the retry policy.
+	c.Send(ctx, "q", []byte("retry me"), "")
+	d, _ = c.Receive(ctx, "q", 0)
+	c.Nack(ctx, "q", d.LeaseID)
+	if again, _ := c.Receive(ctx, "q", 0); again == nil || again.Message.Attempts != 2 {
+		t.Fatalf("plain nack: %+v", again)
+	}
+}

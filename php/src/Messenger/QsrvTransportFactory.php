@@ -21,21 +21,27 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  *   topic         publish to this topic on send, instead of to the queue
  *   subscribe     topics the queue subscribes to on setup (list, or comma
  *                 separated in the DSN)
- *   api_key       API key, if not in the DSN user part
- *   wait_time     seconds get() long-polls, 0-20 (default 5)
- *   auto_setup    create the queue on first use if missing (default true)
- *   on_reject     "ack" (default) or "nack": see QsrvTransport
- *   timeout       HTTP timeout in seconds (default 10)
- *   queue_config  settings used when the queue is created (`options` only):
- *                 visibility_timeout, retry{max_attempts, initial_backoff,
- *                 max_backoff, multiplier}, dead_letter_queue, ordering,
- *                 max_messages, retention. Durations as "30s" or seconds.
+ *   api_key        API key, if not in the DSN user part
+ *   native_retries who retries failed messages (default true):
+ *                    true   qsrv: queue_config.retry and dead_letter_queue;
+ *                           Messenger's retry_strategy is not used
+ *                    false  Symfony Messenger: retry_strategy and
+ *                           failure_transport, like other transports
+ *   wait_time      seconds get() long-polls, 0-20 (default 5)
+ *   auto_setup     create the queue on first use if missing (default true)
+ *   timeout        HTTP timeout in seconds (default 10)
+ *   queue_config   settings the queue is created with (`options` only):
+ *                  visibility_timeout, retry (false = no retries, or
+ *                  {max_attempts, initial_backoff, max_backoff, multiplier}),
+ *                  dead_letter_queue, ordering, max_messages, retention.
+ *                  Durations as "30s" or seconds. qsrv can't change an
+ *                  existing queue: setup fails if they differ.
  *
  * Register it as a service tagged messenger.transport_factory.
  */
 final class QsrvTransportFactory implements TransportFactoryInterface
 {
-    private const OPTIONS = ['queue', 'api_key', 'wait_time', 'auto_setup', 'on_reject', 'timeout', 'queue_config', 'topic', 'subscribe'];
+    private const OPTIONS = ['queue', 'api_key', 'native_retries', 'wait_time', 'auto_setup', 'timeout', 'queue_config', 'topic', 'subscribe'];
 
     public function __construct(private readonly ?HttpClientInterface $httpClient = null)
     {
@@ -58,7 +64,7 @@ final class QsrvTransportFactory implements TransportFactoryInterface
             serializer: $serializer,
             waitTime: $c['wait_time'],
             autoSetup: $c['auto_setup'],
-            onReject: $c['on_reject'],
+            nativeRetries: $c['native_retries'],
             queueConfig: $c['queue_config'],
             topic: $c['topic'],
             subscribe: $c['subscribe'],
@@ -68,7 +74,7 @@ final class QsrvTransportFactory implements TransportFactoryInterface
     /**
      * @param array<string, mixed> $options
      *
-     * @return array{url: string, api_key: string, queue: string, wait_time: float, auto_setup: bool, on_reject: string, timeout: float, queue_config: QueueConfig, topic: ?string, subscribe: list<string>}
+     * @return array{url: string, api_key: string, queue: string, wait_time: float, auto_setup: bool, native_retries: bool, timeout: float, queue_config: QueueConfig, topic: ?string, subscribe: list<string>}
      *
      * @internal
      */
@@ -82,6 +88,9 @@ final class QsrvTransportFactory implements TransportFactoryInterface
         parse_str($parts['query'] ?? '', $query);
         $all = $options + $query;
 
+        if (\array_key_exists('on_reject', $all)) {
+            throw new InvalidArgumentException('qsrv: "on_reject" was replaced by "native_retries": use native_retries: true for qsrv retries (was on_reject: nack) or false for Symfony retries (was on_reject: ack)');
+        }
         if ($unknown = array_diff(array_keys($all), self::OPTIONS)) {
             throw new InvalidArgumentException(\sprintf('qsrv: unknown option(s) "%s"; supported: %s', implode('", "', $unknown), implode(', ', self::OPTIONS)));
         }
@@ -122,10 +131,8 @@ final class QsrvTransportFactory implements TransportFactoryInterface
             throw new InvalidArgumentException(\sprintf('qsrv: wait_time must be between 0 and %d', Client::MAX_WAIT));
         }
 
-        $autoSetup = filter_var($all['auto_setup'] ?? true, \FILTER_VALIDATE_BOOL, \FILTER_NULL_ON_FAILURE);
-        if (null === $autoSetup) {
-            throw new InvalidArgumentException('qsrv: auto_setup must be a boolean');
-        }
+        $autoSetup = self::bool($all, 'auto_setup', true);
+        $nativeRetries = self::bool($all, 'native_retries', true);
 
         $qc = $all['queue_config'] ?? [];
         if (!\is_array($qc)) {
@@ -138,11 +145,22 @@ final class QsrvTransportFactory implements TransportFactoryInterface
             'queue' => (string) $queue,
             'wait_time' => $wait,
             'auto_setup' => $autoSetup,
-            'on_reject' => (string) ($all['on_reject'] ?? QsrvTransport::ON_REJECT_ACK),
+            'native_retries' => $nativeRetries,
             'timeout' => (float) ($all['timeout'] ?? 10),
             'queue_config' => QueueConfig::fromArray($qc),
             'topic' => $topic,
             'subscribe' => $subscribe,
         ];
+    }
+
+    /** @param array<string, mixed> $all */
+    private static function bool(array $all, string $key, bool $default): bool
+    {
+        $v = filter_var($all[$key] ?? $default, \FILTER_VALIDATE_BOOL, \FILTER_NULL_ON_FAILURE);
+        if (null === $v) {
+            throw new InvalidArgumentException(\sprintf('qsrv: %s must be true or false', $key));
+        }
+
+        return $v;
     }
 }

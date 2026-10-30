@@ -70,11 +70,15 @@ final class ClientIntegrationTest extends IntegrationTestCase
     public function testNackAppliesRetryPolicy(): void
     {
         $q = $this->queueName();
-        $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 5)));
+        $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 5, initialBackoff: 0)));
         $this->client->send($q, 'x');
         $this->client->nack($q, $this->client->receive($q)->leaseId);
         $again = $this->client->receive($q);
         self::assertSame(2, $again?->message->attempts);
+
+        $this->client->nack($q, $again->leaseId, deadLetter: true); // no DLQ: dropped into history
+        self::assertNull($this->client->receive($q));
+        self::assertSame([0, 1], [$this->client->getQueue($q)->stats->messages, $this->client->getQueue($q)->stats->history]);
     }
 
     public function testDelay(): void

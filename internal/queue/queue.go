@@ -292,6 +292,20 @@ func (q *Queue) Nack(leaseID string) error {
 	return err
 }
 
+// DeadLetter fails the message without retrying it: it goes to the dead
+// letter queue now, or is dropped if the queue has none (kept as history
+// either way). For failures that retrying can't fix.
+func (q *Queue) DeadLetter(leaseID string) error {
+	err := q.settle(leaseID, func(m *Message, _ time.Time) bool {
+		q.finishLocked(m)
+		return true
+	})
+	if err == nil {
+		q.b.hooks.Event(q.name, EvNacked, 1)
+	}
+	return err
+}
+
 // Extend sets the lease deadline to now+d (heartbeat for long jobs).
 func (q *Queue) Extend(leaseID string, d time.Duration) (time.Time, error) {
 	if d <= 0 {

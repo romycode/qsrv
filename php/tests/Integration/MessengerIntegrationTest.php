@@ -159,24 +159,24 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         self::assertSame(1, $t->getMessageCount());
     }
 
-    public function testRejectAcksByDefault(): void
+    public function testRejectNacksByDefault(): void
     {
         $q = $this->queueName();
+        $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 5, initialBackoff: 0)));
         $t = $this->transport($q);
         $t->send(new Envelope(new DummyMessage('x')));
-        $t->reject(self::all($t)[0]);
-        self::assertSame([], self::all($t));
-        self::assertSame(1, $this->client->getQueue($q)->stats->history);
+        $t->reject(self::all($t)[0]); // outside a worker: qsrv's retry policy decides
+        self::assertSame(2, self::all($t)[0]->last(QsrvReceivedStamp::class)?->attempts);
     }
 
-    public function testRejectNackUsesQsrvRetries(): void
+    public function testRejectAcksWithSymfonyRetries(): void
     {
         $q = $this->queueName();
-        $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 5)));
-        $t = $this->transport($q, ['on_reject' => 'nack']);
+        $t = $this->transport($q, ['native_retries' => false]);
         $t->send(new Envelope(new DummyMessage('x')));
-        $t->reject(self::all($t)[0]);
-        self::assertSame(2, self::all($t)[0]->last(QsrvReceivedStamp::class)?->attempts);
+        $t->reject(self::all($t)[0]); // Messenger already re-sent it or gave up
+        self::assertSame([], self::all($t));
+        self::assertSame(1, $this->client->getQueue($q)->stats->history);
     }
 
     public function testKeepaliveExtendsLease(): void
@@ -205,39 +205,38 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         $t->ack($env);
     }
 
-    public function testUndecodableMessage(): void
+    public function testUndecodableMessageGoesToTheDeadLetterQueue(): void
     {
         $q = $this->queueName();
-        $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 3)));
+        $dlq = $this->queueName();
+        $this->client->createQueue($dlq);
+        $this->client->createQueue($q, new QueueConfig(retry: new RetryPolicy(maxAttempts: 5), deadLetterQueue: $dlq));
         $this->client->send($q, '{"not":"a messenger envelope"}');
         $t = $this->transport($q);
 
         if (method_exists(MessageDecodingFailedException::class, 'wrap')) {
-            // Messenger 8.1+: the serializer returns an envelope whose message is
-            // the decoding exception; the worker handles it like any failure.
+            // Messenger 8.x: the serializer returns an envelope whose message is
+            // the decoding exception; the worker rejects it.
             [$env] = self::all($t);
             self::assertInstanceOf(MessageDecodingFailedException::class, $env->getMessage());
-            self::assertNotNull($env->last(QsrvReceivedStamp::class));
             $t->reject($env);
-            self::assertSame(0, $this->client->getQueue($q)->stats->messages);
-
-            return;
+        } else {
+            // Messenger 7.4: decode() throws, and the transport dead-letters it.
+            try {
+                self::all($t);
+                self::fail('decoded garbage');
+            } catch (MessageDecodingFailedException) {
+            }
         }
-
-        // Messenger 7.4: decode() throws; the transport nacks so qsrv's retry
-        // policy / dead-letter queue deal with the poison message.
-        try {
-            self::all($t);
-            self::fail('decoded garbage');
-        } catch (MessageDecodingFailedException) {
-        }
-        self::assertSame(2, $this->client->receive($q)?->message->attempts, 'must be back in the queue');
+        self::assertSame(0, $this->client->getQueue($q)->stats->messages, 'not retried');
+        self::assertSame('{"not":"a messenger envelope"}', $this->client->receive($dlq)?->message->body);
     }
 
     public function testWorkerConsumes(): void
     {
         $q = $this->queueName();
-        $t = $this->transport($q, ['wait_time' => 1]);
+        // No retry listener here: with Symfony retries a failed message is just acked.
+        $t = $this->transport($q, ['wait_time' => 1, 'native_retries' => false]);
         $handled = [];
         $worker = null;
         $handler = function (DummyMessage $m) use (&$handled, &$worker): void {

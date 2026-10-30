@@ -111,10 +111,14 @@ final class Client
         $this->request('POST', self::q($queue, '/leases/'.rawurlencode($leaseId).'/ack'));
     }
 
-    /** Gives the message back; the queue's retry policy decides when it is redelivered. */
-    public function nack(string $queue, string $leaseId): void
+    /**
+     * Gives the message back; the queue's retry policy decides when it is
+     * redelivered. With $deadLetter it skips the retries and goes to the
+     * dead letter queue now (dropped if the queue has none).
+     */
+    public function nack(string $queue, string $leaseId, bool $deadLetter = false): void
     {
-        $this->request('POST', self::q($queue, '/leases/'.rawurlencode($leaseId).'/nack'));
+        $this->request('POST', self::q($queue, '/leases/'.rawurlencode($leaseId).'/nack'), $deadLetter ? ['dead_letter' => true] : null);
     }
 
     /**

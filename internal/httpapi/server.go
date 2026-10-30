@@ -303,6 +303,14 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nack(w http.ResponseWriter, r *http.Request) {
+	var in api.NackRequest
+	if r.ContentLength != 0 && !s.decode(w, r, &in, 4096) {
+		return
+	}
+	if in.DeadLetter {
+		s.settle(w, r, (*queue.Queue).DeadLetter)
+		return
+	}
 	s.settle(w, r, (*queue.Queue).Nack)
 }
 

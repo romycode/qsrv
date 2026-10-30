@@ -236,3 +236,30 @@ func TestConcurrentExactlyOnceAck(t *testing.T) {
 		t.Fatalf("queue not drained: %+v", s)
 	}
 }
+
+func TestDeadLetterSkipsRetries(t *testing.T) {
+	b := newTestBroker(t, nil)
+	dlq := mustCreate(t, b, "dlq", Config{})
+	q := mustCreate(t, b, "q", Config{Retry: RetryPolicy{MaxAttempts: 5}, DeadLetterQueue: "dlq"})
+	q.Send([]byte("a"), "G")
+	q.Send([]byte("b"), "G")
+	if err := q.DeadLetter(recv(t, q).LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if d := recv(t, dlq); string(d.Message.Body) != "a" || d.Message.GroupID != "G" {
+		t.Fatalf("dlq got %+v", d.Message)
+	}
+	if got := string(recv(t, q).Message.Body); got != "b" {
+		t.Fatalf("group not unblocked: got %q", got)
+	}
+	if err := q.DeadLetter("nope"); !errors.Is(err, ErrLeaseNotFound) {
+		t.Fatalf("unknown lease: %v", err)
+	}
+
+	noDLQ := mustCreate(t, b, "nodlq", Config{Retry: RetryPolicy{MaxAttempts: 5}})
+	noDLQ.Send([]byte("x"), "")
+	noDLQ.DeadLetter(recv(t, noDLQ).LeaseID)
+	if s := noDLQ.Stats(); s.Messages != 0 || s.History != 1 {
+		t.Fatalf("without a DLQ it must be dropped into history: %+v", s)
+	}
+}
