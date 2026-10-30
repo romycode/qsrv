@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -18,8 +17,6 @@ var (
 	ErrQueueNotFound = errors.New("queue: not found")
 	ErrInvalidConfig = errors.New("queue: invalid config")
 )
-
-var validName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,80}$`)
 
 const (
 	DefaultReplayLimit = 1000
@@ -115,7 +112,7 @@ func Open(dataDir string, o Options) (*Broker, error) {
 }
 
 func (b *Broker) Create(name string, cfg Config) (*Queue, error) {
-	if !validName.MatchString(name) {
+	if !validFullName(name) {
 		return nil, fmt.Errorf("%w: invalid name %q", ErrInvalidConfig, name)
 	}
 	if cfg.VisibilityTimeout == 0 {
@@ -133,6 +130,8 @@ func (b *Broker) Create(name string, cfg Config) (*Queue, error) {
 		return nil, fmt.Errorf("%w: negative values", ErrInvalidConfig)
 	case cfg.DeadLetterQueue == name:
 		return nil, fmt.Errorf("%w: queue cannot be its own DLQ", ErrInvalidConfig)
+	case cfg.DeadLetterQueue != "" && !sameTenant(name, cfg.DeadLetterQueue):
+		return nil, crossTenant("dead letter queue", name, cfg.DeadLetterQueue)
 	}
 
 	b.persist.RLock()
@@ -316,6 +315,9 @@ func (b *Broker) Replay(src string, req ReplayRequest) (ReplayResult, error) {
 			return ReplayResult{}, fmt.Errorf("%w: unknown state %q (acked, dropped, dead_lettered)", ErrInvalidConfig, s)
 		}
 		states = append(states, st)
+	}
+	if !sameTenant(src, req.To) {
+		return ReplayResult{}, crossTenant("replay destination", src, req.To)
 	}
 	if _, err := b.Get(src); err != nil {
 		return ReplayResult{}, err
