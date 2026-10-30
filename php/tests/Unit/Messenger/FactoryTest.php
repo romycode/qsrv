@@ -23,13 +23,13 @@ final class FactoryTest extends TestCase
 
     public function testParseFullDsn(): void
     {
-        $c = QsrvTransportFactory::parse('qsrv://my%2Bkey@qsrv.internal:8080/orders%20v2?wait_time=20&auto_setup=false&on_reject=nack&timeout=3');
+        $c = QsrvTransportFactory::parse('qsrv://my%2Bkey@qsrv.internal:8080/orders%20v2?wait_time=20&auto_setup=false&native_retries=false&timeout=3');
         self::assertSame('http://qsrv.internal:8080', $c['url']);
         self::assertSame('my+key', $c['api_key']);
         self::assertSame('orders v2', $c['queue']);
         self::assertSame(20.0, $c['wait_time']);
         self::assertFalse($c['auto_setup']);
-        self::assertSame('nack', $c['on_reject']);
+        self::assertFalse($c['native_retries']);
         self::assertSame(3.0, $c['timeout']);
     }
 
@@ -42,7 +42,7 @@ final class FactoryTest extends TestCase
         self::assertSame('https://qsrv.example.com', $c['url']);
         self::assertSame(5.0, $c['wait_time']);
         self::assertTrue($c['auto_setup']);
-        self::assertSame('ack', $c['on_reject']);
+        self::assertTrue($c['native_retries'], 'qsrv retries by default');
         self::assertSame(60.0, $c['queue_config']->visibilityTimeout);
         self::assertSame(3, $c['queue_config']->retry?->maxAttempts);
         self::assertSame(2.0, $c['queue_config']->retry?->initialBackoff);
@@ -85,10 +85,36 @@ final class FactoryTest extends TestCase
         self::assertSame('q', $t->getQueueName());
     }
 
-    public function testInvalidOnReject(): void
+    public function testOnRejectPointsToNativeRetries(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        (new QsrvTransportFactory())->createTransport('qsrv://k@h/q?on_reject=drop', [], new PhpSerializer());
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('native_retries');
+        QsrvTransportFactory::parse('qsrv://k@h/q?on_reject=nack');
+    }
+
+    public function testNativeRetriesMustBeBoolean(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        QsrvTransportFactory::parse('qsrv://k@h/q', ['native_retries' => 'symfony']);
+    }
+
+    public function testNativeRetriesReachesTheTransport(): void
+    {
+        $f = new QsrvTransportFactory();
+        self::assertTrue($f->createTransport('qsrv://k@h/q', [], new PhpSerializer())->usesNativeRetries());
+        self::assertFalse($f->createTransport('qsrv://k@h/q', ['native_retries' => false], new PhpSerializer())->usesNativeRetries());
+    }
+
+    public function testRetryFalseMeansNoRetries(): void
+    {
+        $c = QsrvTransportFactory::parse('qsrv://k@h/q', ['queue_config' => ['retry' => false]]);
+        self::assertSame(1, $c['queue_config']->retry?->maxAttempts);
+    }
+
+    public function testPartialRetryKeepsDefaults(): void
+    {
+        $r = QsrvTransportFactory::parse('qsrv://k@h/q', ['queue_config' => ['retry' => ['max_attempts' => 8]]])['queue_config']->retry;
+        self::assertSame([8, 1.0, 60.0, 2.0], [$r?->maxAttempts, $r?->initialBackoff, $r?->maxBackoff, $r?->multiplier]);
     }
 
     public function testTopicOptions(): void

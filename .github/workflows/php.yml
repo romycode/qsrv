@@ -64,7 +64,8 @@ jobs:
         run: |
           composer update --prefer-dist --no-progress \
             --with "symfony/http-client:$SF" --with "symfony/messenger:$SF" \
-            --with "symfony/serializer:$SF" --with "symfony/property-access:$SF"
+            --with "symfony/serializer:$SF" --with "symfony/property-access:$SF" \
+            --with "symfony/event-dispatcher:$SF"
           composer show 'symfony/*' | grep -E 'messenger|http-client ' || true
       - name: Start qsrv
         run: |

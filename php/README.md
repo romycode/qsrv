@@ -40,6 +40,7 @@ while ($d = $qsrv->receive('emails', wait: 20)) {   // long-poll up to 20s
         $qsrv->ack('emails', $d->leaseId);
     } catch (\Throwable $e) {
         $qsrv->nack('emails', $d->leaseId);         // retry policy decides when it comes back
+        // $qsrv->nack('emails', $d->leaseId, deadLetter: true);  // no retries: straight to the DLQ
     }
 }
 ```
@@ -82,35 +83,101 @@ framework:
                 dsn: 'qsrv://%env(QSRV_API_KEY)%@qsrv.internal:8080/app-async'  # qsrvs:// for https
                 serializer: messenger.transport.symfony_serializer            # JSON, readable from Go
                 options:
-                    wait_time: 5
+                    # native_retries: true (default) -> qsrv retries, configured below
                     queue_config:
-                        visibility_timeout: 5m
+                        visibility_timeout: 5m          # longest a handler may run (or use --keepalive)
+                        retry:
+                            max_attempts: 5             # 1 delivery + 4 retries
+                            initial_backoff: 1s
+                            multiplier: 2               # 1s, 2s, 4s, 8s
+                            max_backoff: 1m
+                        dead_letter_queue: app-async-dlq
                         retention: 2160h
-                retry_strategy:
-                    max_retries: 3
-                    delay: 1000
-                    multiplier: 2
         routing:
             App\Message\SendEmail: async
 ```
 
 ```sh
-bin/console messenger:setup-transports        # creates the queue (also automatic on first use)
+bin/console messenger:setup-transports        # creates the DLQ and the queue (also automatic on first use)
 bin/console messenger:consume async --keepalive
 bin/console messenger:stats                   # messages waiting
 ```
 
+### Retries: `native_retries`
+
+Who retries a failed message is the one decision to make per transport.
+
+| | `native_retries: true` (default) | `native_retries: false` |
+|---|---|---|
+| retried by | **qsrv**: the queue's `queue_config.retry` | **Symfony**: the transport's `retry_strategy` |
+| a retry is | the **same** message, redelivered with backoff | a **new** message, sent with Messenger's delay |
+| ordering groups | kept: the failed message stays at the head of its group | **broken**: the retry goes to the end of its group |
+| when retries run out | the queue's `dead_letter_queue` (dropped if none) | Messenger's `failure_transport` |
+| unrecoverable errors¹ | straight to the `dead_letter_queue` | straight to the `failure_transport` |
+| inspect / retry failed | `qctl recv`, `qctl replay` on the DLQ | `messenger:failed:show`, `messenger:failed:retry` |
+| configure | `queue_config.retry`, `queue_config.dead_letter_queue` | `retry_strategy`, `failure_transport` |
+| ignored | `retry_strategy` delays and counts² | `queue_config.retry`³ |
+
+¹ `UnrecoverableMessageHandlingException`, or any exception when
+`max_retries: 0`. ² Messenger still decides *whether* a failure is retryable;
+qsrv decides *when* and *how many times*. Leave `max_retries` above 0.
+³ Except for messages whose lease expired (a crashed worker, or a handler
+running past `visibility_timeout` without `--keepalive`): qsrv always
+redelivers those, with the queue's policy.
+
+**To use Symfony's retries, pass `native_retries: false`:**
+
+```yaml
+transports:
+    async:
+        dsn: 'qsrv://%env(QSRV_API_KEY)%@qsrv.internal:8080/app-async'
+        options:
+            native_retries: false     # <- Messenger's retry_strategy and failure_transport
+        retry_strategy:
+            max_retries: 3
+            delay: 1000
+            multiplier: 2
+        failure_transport: failed
+```
+
+Rules of thumb:
+
+- Use the default (qsrv) with `QsrvGroupStamp`: Symfony's retries reorder
+  groups. It is also the only mode where a message keeps its id and its
+  attempt count (`QsrvReceivedStamp::$attempts`) across retries.
+- With `native_retries: true`, don't set a `failure_transport` for the
+  transport: unrecoverable messages would land both there and in the DLQ.
+- **No retries at all**: `queue_config: {retry: false}` (same as
+  `max_attempts: 1`). The first failure goes to the DLQ. `max_attempts: 0`
+  means the opposite: retry forever.
+- Fields of `retry` you leave out take qsrv's defaults: 5 attempts, 1s
+  backoff doubling up to 1m. `initial_backoff: 0` retries immediately.
+- Messages that can't be decoded go straight to the DLQ in both modes:
+  retrying can't fix them.
+
+### Queue settings are applied when the queue is created
+
+`queue_config` is used by `messenger:setup-transports` (and by `auto_setup`
+on first use) to create the queue. qsrv can't change an existing queue's
+settings, so if the queue exists with different ones, `setup-transports`
+fails and lists them, e.g. `retry.max_attempts: configured 8, queue has 5`.
+Settings you don't configure aren't checked. To change them: delete the queue
+(`qctl delete`, drops its messages and history) and run `setup-transports`
+again, or create a new queue and point the transport at it.
+
+### Options
+
 | option | default | |
 |---|---|---|
+| `native_retries` | `true` | who retries failures: qsrv (`true`) or Symfony (`false`). See above |
+| `queue_config` | qsrv defaults | settings to create the queue with: `visibility_timeout`, `retry` (`false`, or `max_attempts`, `initial_backoff`, `max_backoff`, `multiplier`), `dead_letter_queue` (created too), `ordering`, `max_messages`, `retention`. Durations as `30s` or seconds. Options only, not the DSN |
 | `queue` | DSN path | queue name |
 | `api_key` | DSN user | API key |
 | `wait_time` | `5` | seconds a worker long-polls per fetch (0-20) |
 | `auto_setup` | `true` | create the queue on first use if missing |
-| `on_reject` | `ack` | `ack` or `nack`, see below |
 | `timeout` | `10` | HTTP timeout, seconds |
 | `topic` | — | `send` publishes to this topic instead of the queue (the queue is then optional: a publish-only transport) |
 | `subscribe` | — | topics this queue subscribes to on setup (created if missing); list, or comma-separated in the DSN |
-| `queue_config` | server defaults | used when the transport creates the queue: `visibility_timeout`, `retry` (`max_attempts`, `initial_backoff`, `max_backoff`, `multiplier`), `dead_letter_queue`, `ordering`, `max_messages`, `retention`. Ignored if the queue already exists. |
 
 ### Topics: one event, several services
 
@@ -142,43 +209,17 @@ with the message id in each queue.
 
 - `QsrvGroupStamp('order-42')` on dispatch: sends the message in that
   ordering group (strict order, one at a time per group).
-- `DelayStamp` (and Messenger's retry delays) map to qsrv's `delay` (max 720h).
+- `DelayStamp` maps to qsrv's `delay` (max 720h).
 - Received envelopes carry `QsrvReceivedStamp` (lease id, qsrv message id,
-  qsrv attempts, group, lease expiry) and `TransportMessageIdStamp`.
-
-### Retries: Messenger's or qsrv's
-
-**Default (`on_reject: ack`): Messenger retries.** On failure Messenger re-sends
-the message with a delay (`retry_strategy`) and rejects the original; reject
-acks it in qsrv. After `max_retries` it goes to Messenger's `failure_transport`.
-qsrv's own retry policy only applies to messages whose lease expired
-(a worker crashed or a handler took longer than `visibility_timeout`).
-
-**`on_reject: nack` with `retry_strategy: {max_retries: 0}`: qsrv retries.**
-Reject nacks the lease, so qsrv's `retry` policy applies backoff and, when
-exhausted, moves the message to the queue's `dead_letter_queue`. Don't set a
-`failure_transport` for this transport: Messenger would copy the message there
-on every failed attempt. Use this
-with ordering groups: a Messenger retry is a *new* message at the end of the
-group, so later messages of the group would overtake the failed one; a qsrv
-nack keeps it at the head of its group.
-
-Either way, processed messages stay in qsrv's history and can be replayed.
-
-### Messages that can't be decoded
-
-With Messenger 7.4 the transport nacks them, so qsrv's retry policy and
-dead-letter queue take care of them. With Messenger 8.1+ the serializer
-returns an envelope whose message is the `MessageDecodingFailedException`, and
-the worker treats it like any failed message (retries, then `failure_transport`).
+  qsrv attempts, group, lease expiry, queue) and `TransportMessageIdStamp`.
 
 ### Long handlers
 
 A received message is leased for the queue's `visibility_timeout`. If a
 handler can take longer, consume with `--keepalive`: the transport extends the
 lease every few seconds while the handler runs. Without it, an expired lease
-makes qsrv deliver the message again and the late `ack` fails with
-`TransportException` ("lease expired").
+makes qsrv deliver the message again (counting it as a failed attempt) and
+the late `ack` fails with `TransportException` ("lease expired").
 
 ### Wire format (other languages)
 

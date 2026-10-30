@@ -98,6 +98,8 @@ framework:
     messenger:
         transports:
             async: 'qsrv://%env(QSRV_API_KEY)%@qsrv.internal:8080/app-async'
+            # qsrv retries by default (queue_config.retry + DLQ, keeps group order);
+            # options: {native_retries: false} to use retry_strategy / failure_transport
 ```
 
 Docs: [php/README.md](php/README.md). Runnable examples:

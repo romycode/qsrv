@@ -16,6 +16,8 @@ final class QsrvReceivedStamp implements NonSendableStampInterface
         public readonly int $attempts,
         public readonly ?string $groupId,
         public readonly \DateTimeImmutable $leaseExpiresAt,
+        /** Queue the message was received from. */
+        public readonly string $queue = '',
     ) {
     }
 }
