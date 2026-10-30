@@ -2,9 +2,9 @@
 // client: ordering groups, a delayed message, retries with backoff, a
 // dead-letter queue, and lease heartbeats for slow jobs.
 //
-//	export QSRV_API_KEYS=$(openssl rand -hex 32)
-//	go run ./cmd/qsrv -data-dir /tmp/qsrv-example &
-//	QSRV_ADDR=http://localhost:8080 QSRV_API_KEY=$QSRV_API_KEYS go run ./examples/go
+//	export QSRV_API_KEY=$(openssl rand -hex 32)
+//	QSRV_API_KEYS="demo:example:$QSRV_API_KEY" go run ./cmd/qsrv -data-dir /tmp/qsrv-example &
+//	QSRV_ADDR=http://localhost:8080 go run ./examples/go
 package main
 
 import (

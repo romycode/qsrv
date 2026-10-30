@@ -9,6 +9,7 @@ Named FIFO queues over HTTP, with:
 - **delayed messages**;
 - **topics**: publish once, every subscribed queue gets a copy, atomically;
 - **history and replay** of processed messages;
+- **multitenancy**: each API key belongs to a tenant and only sees its queues;
 - every acknowledged write is **fsynced**: a crash never loses what a client saw.
 
 Clients for **Go** and **PHP**, a **Symfony Messenger** transport, a CLI,
@@ -22,10 +23,11 @@ git clone https://github.com/romycode/qsrv && cd qsrv
 CGO_ENABLED=0 go build -o bin/ ./cmd/...                 # qsrv, qctl, qbench (Go 1.27+)
 export PATH=$PWD/bin:$PATH
 
-export QSRV_API_KEYS=$(openssl rand -hex 32)             # one or more, comma-separated
+export QSRV_API_KEY=$(openssl rand -hex 32)              # the client's key
+export QSRV_API_KEYS="acme:cli:$QSRV_API_KEY"            # server: tenant:name:key, comma-separated
 qsrv -data-dir ./data -addr :8080 &
 
-export QSRV_ADDR=http://localhost:8080 QSRV_API_KEY=$QSRV_API_KEYS
+export QSRV_ADDR=http://localhost:8080
 qctl create -max-attempts 5 -backoff 1s orders
 echo '{"order_id": 1}' | qctl send -group customer-42 orders
 qctl recv -wait 20s orders                               # prints the message and its lease
@@ -35,7 +37,7 @@ qctl ack orders <lease>
 With Docker:
 
 ```sh
-docker run -d -p 8080:8080 -e QSRV_API_KEYS=$QSRV_API_KEYS -v qsrv-data:/data ghcr.io/romycode/qsrv:latest
+docker run -d -p 8080:8080 -e QSRV_API_KEYS="$QSRV_API_KEYS" -v qsrv-data:/data ghcr.io/romycode/qsrv:latest
 ```
 
 Or over plain HTTP:
@@ -127,6 +129,6 @@ running jobs finish. `qctl <command> -h` lists each command's flags.
 |---|---|
 | [Concepts](docs/concepts.md) | leases, retries and DLQs, ordering groups, delays, topics, replay, guarantees |
 | [HTTP API](docs/api.md) | every endpoint, request and response, error codes |
-| [Operations](docs/operations.md) | configuration, Docker, backups, metrics and alerts, performance and sizing |
+| [Operations](docs/operations.md) | configuration, API keys and tenants, Docker, backups, metrics and alerts, sizing |
 | [PHP](php/README.md) | client, Messenger transport, retries with Messenger vs qsrv |
 | [Development](docs/development.md) | tests, benchmarks, CI, commits, releases, internals |

@@ -82,7 +82,7 @@ jobs:
       - name: Smoke test
         run: |
           key=$(openssl rand -hex 32)
-          docker run -d --name qsrv -p 18080:8080 -e QSRV_API_KEYS=$key qsrv:test
+          docker run -d --name qsrv -p 18080:8080 -e QSRV_API_KEYS="smoke:ci:$key" qsrv:test
           for _ in $(seq 60); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' qsrv)" = healthy ] && break; sleep 1
           done

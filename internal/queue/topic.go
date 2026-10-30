@@ -34,12 +34,17 @@ type Published struct {
 }
 
 func (b *Broker) CreateTopic(name string, queues []string) (Topic, error) {
-	if !validName.MatchString(name) {
+	if !validFullName(name) {
 		return Topic{}, fmt.Errorf("%w: invalid topic name %q", ErrInvalidConfig, name)
 	}
 	subs, err := normalizeSubs(queues)
 	if err != nil {
 		return Topic{}, err
+	}
+	for _, q := range subs {
+		if !sameTenant(name, q) {
+			return Topic{}, crossTenant("queue", name, q)
+		}
 	}
 	b.persist.RLock()
 	b.mu.Lock()
@@ -108,6 +113,9 @@ func (b *Broker) Subscribe(topic, queue string) (Topic, error) {
 	return b.updateSubs(topic, func(subs []string) ([]string, error) {
 		if slices.Contains(subs, queue) {
 			return subs, nil
+		}
+		if !sameTenant(topic, queue) {
+			return nil, crossTenant("queue", topic, queue)
 		}
 		if _, ok := b.queues[queue]; !ok {
 			return nil, fmt.Errorf("%w: queue %q does not exist", ErrInvalidConfig, queue)

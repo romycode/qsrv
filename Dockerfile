@@ -21,8 +21,9 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/qsrv /out/qctl /usr/local/bin/
 COPY --from=build --chown=nonroot:nonroot /out/data /data
 
-# Configure with the usual flags or env vars. The API key(s) are required:
-# QSRV_API_KEYS, or QSRV_API_KEYS_FILE pointing at a mounted secret.
+# Configure with the usual flags or env vars. API keys are required, as
+# tenant:name:key entries: QSRV_API_KEYS, or QSRV_API_KEYS_FILE pointing at a
+# mounted secret (reloaded on SIGHUP: docker kill -s HUP).
 ENV QSRV_ADDR=:8080 \
     QSRV_DATA_DIR=/data \
     QSRV_METRICS_ADDR=:9464

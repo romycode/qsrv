@@ -3,6 +3,13 @@
 How qsrv behaves, and what you can rely on. For the endpoints see
 [api.md](api.md).
 
+## Tenants
+
+Every queue and topic belongs to a tenant, and every API key to one tenant:
+a key only sees its tenant's queues and topics, and two tenants can use the
+same names. Admin keys see all tenants. Details and key format in
+[operations.md](operations.md#api-keys-and-tenants).
+
 ## Queues
 
 A queue is a named, durable FIFO list of messages (`[A-Za-z0-9_.-]`, up to 80
@@ -150,6 +157,6 @@ qctl replay -to orders-replay -group customer-42 -states acked orders
 
 ## Not included
 
-No batch endpoints, no deduplication, no per-key permissions (any valid API
-key can do everything), no priorities, no content-based filtering on topics
+No batch endpoints, no deduplication, no per-key permissions inside a tenant
+(any key of a tenant can do everything in it), no per-tenant quotas, no priorities, no content-based filtering on topics
 (every subscriber gets every message).

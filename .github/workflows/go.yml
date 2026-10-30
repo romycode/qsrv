@@ -185,8 +185,8 @@ jobs:
         run: |
           CGO_ENABLED=0 go build -o bin/ ./cmd/qsrv ./cmd/qbench
           # Two statements on purpose: in `export A=x B=$A`, $A expands before A is set.
-          export QSRV_API_KEYS=$(openssl rand -hex 32)
-          export QSRV_API_KEY="$QSRV_API_KEYS" QSRV_ADDR=http://127.0.0.1:18080
+          export QSRV_API_KEY=$(openssl rand -hex 32)
+          export QSRV_API_KEYS="bench:qbench:$QSRV_API_KEY" QSRV_ADDR=http://127.0.0.1:18080
           data=$(mktemp -d)
           bin/qsrv -addr 127.0.0.1:18080 -data-dir "$data" -metrics-addr "" -log-level warn 2> qsrv.log &
           pid=$!

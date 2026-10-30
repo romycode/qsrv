@@ -47,40 +47,40 @@ func TestMetricsEndToEnd(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	c := client.New(srv.URL, "")
-	c.CreateQueue(ctx, "dlq", api.QueueConfig{})
-	c.CreateQueue(ctx, "jobs", api.QueueConfig{
+	c := client.New(srv.URL, "") // no auth = admin: full tenant/name names
+	c.CreateQueue(ctx, "t/dlq", api.QueueConfig{})
+	c.CreateQueue(ctx, "t/jobs", api.QueueConfig{
 		VisibilityTimeout: api.Duration(5 * time.Second),
 		Retry:             &api.RetryPolicy{MaxAttempts: 2},
-		DeadLetterQueue:   "dlq",
+		DeadLetterQueue:   "t/dlq",
 		MaxMessages:       100,
 	})
 	for range 3 {
-		c.Send(ctx, "jobs", []byte("x"), "")
+		c.Send(ctx, "t/jobs", []byte("x"), "")
 	}
-	d1, _ := c.Receive(ctx, "jobs", 0)
-	c.Ack(ctx, "jobs", d1.LeaseID)
-	d2, _ := c.Receive(ctx, "jobs", 0)
-	c.Nack(ctx, "jobs", d2.LeaseID) // back to ready, attempt 1 of 2
-	c.Receive(ctx, "jobs", 0)       // d2 again: redelivered
-	clk.Advance(6 * time.Second)    // lease expires -> exhausted -> dlq
-	clk.Advance(30 * time.Second)   // oldest live msg (3rd) now ~36s old
-	c.Ack(ctx, "jobs", "nope")      // 410; also triggers expiry processing
+	d1, _ := c.Receive(ctx, "t/jobs", 0)
+	c.Ack(ctx, "t/jobs", d1.LeaseID)
+	d2, _ := c.Receive(ctx, "t/jobs", 0)
+	c.Nack(ctx, "t/jobs", d2.LeaseID) // back to ready, attempt 1 of 2
+	c.Receive(ctx, "t/jobs", 0)       // d2 again: redelivered
+	clk.Advance(6 * time.Second)      // lease expires -> exhausted -> dlq
+	clk.Advance(30 * time.Second)     // oldest live msg (3rd) now ~36s old
+	c.Ack(ctx, "t/jobs", "nope")      // 410; also triggers expiry processing
 
 	out := scrape(t, o)
 	for _, want := range []string{
-		`qsrv_messages_total{queue="jobs",event="sent"} 3`,
-		`qsrv_messages_total{queue="jobs",event="acked"} 1`,
-		`qsrv_messages_total{queue="jobs",event="nacked"} 1`,
-		`qsrv_messages_total{queue="jobs",event="redelivered"} 1`,
-		`qsrv_messages_total{queue="jobs",event="expired"} 1`,
-		`qsrv_messages_total{queue="jobs",event="dead_lettered"} 1`,
-		`qsrv_messages_total{queue="dlq",event="dead_letter_in"} 1`,
-		`qsrv_queue_messages{queue="jobs",state="ready"} 1`,
-		`qsrv_queue_messages{queue="dlq",state="ready"} 1`,
-		`qsrv_queue_max_messages{queue="jobs"} 100`,
-		`qsrv_queue_oldest_message_age_seconds{queue="jobs"} 36`,
-		`qsrv_queue_info{queue="jobs",dead_letter_queue="dlq",ordering="available",max_attempts="2"} 1`,
+		`qsrv_messages_total{queue="t/jobs",event="sent"} 3`,
+		`qsrv_messages_total{queue="t/jobs",event="acked"} 1`,
+		`qsrv_messages_total{queue="t/jobs",event="nacked"} 1`,
+		`qsrv_messages_total{queue="t/jobs",event="redelivered"} 1`,
+		`qsrv_messages_total{queue="t/jobs",event="expired"} 1`,
+		`qsrv_messages_total{queue="t/jobs",event="dead_lettered"} 1`,
+		`qsrv_messages_total{queue="t/dlq",event="dead_letter_in"} 1`,
+		`qsrv_queue_messages{queue="t/jobs",state="ready"} 1`,
+		`qsrv_queue_messages{queue="t/dlq",state="ready"} 1`,
+		`qsrv_queue_max_messages{queue="t/jobs"} 100`,
+		`qsrv_queue_oldest_message_age_seconds{queue="t/jobs"} 36`,
+		`qsrv_queue_info{queue="t/jobs",dead_letter_queue="t/dlq",ordering="available",max_attempts="2"} 1`,
 		`qsrv_http_requests_total{route="POST /v1/queues/{name}/messages",method="POST",code="201"} 3`,
 		`qsrv_http_requests_total{route="POST /v1/queues/{name}/leases/{lease}/ack",method="POST",code="410"} 1`,
 		`qsrv_store_commit_duration_seconds_count`,
@@ -97,12 +97,12 @@ func TestMetricsEndToEnd(t *testing.T) {
 	}
 
 	// deleting a queue drops its series (no stale gauges/counters)
-	c.CreateQueue(ctx, "tmp", api.QueueConfig{})
-	c.Send(ctx, "tmp", []byte("x"), "")
-	if err := c.DeleteQueue(ctx, "tmp"); err != nil {
+	c.CreateQueue(ctx, "t/tmp", api.QueueConfig{})
+	c.Send(ctx, "t/tmp", []byte("x"), "")
+	if err := c.DeleteQueue(ctx, "t/tmp"); err != nil {
 		t.Fatal(err)
 	}
-	if out := scrape(t, o); strings.Contains(out, `queue="tmp"`) {
+	if out := scrape(t, o); strings.Contains(out, `queue="t/tmp"`) {
 		t.Fatal("deleted queue still exported")
 	}
 }

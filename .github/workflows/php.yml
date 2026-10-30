@@ -73,7 +73,7 @@ jobs:
           key=$(openssl rand -hex 32)
           echo "QSRV_TEST_API_KEY=$key" >> "$GITHUB_ENV"
           echo "QSRV_TEST_URL=http://127.0.0.1:18080" >> "$GITHUB_ENV"
-          QSRV_API_KEYS=$key nohup bin/qsrv -addr 127.0.0.1:18080 -data-dir "$RUNNER_TEMP/qsrv" -metrics-addr "" -log-level warn > qsrv.log 2>&1 &
+          QSRV_API_KEYS="php-ci:phpunit:$key" nohup bin/qsrv -addr 127.0.0.1:18080 -data-dir "$RUNNER_TEMP/qsrv" -metrics-addr "" -log-level warn > qsrv.log 2>&1 &
           for _ in $(seq 100); do curl -sf http://127.0.0.1:18080/healthz >/dev/null && exit 0; sleep 0.1; done
           cat qsrv.log; exit 1
       - name: PHPUnit (unit + integration against qsrv)
