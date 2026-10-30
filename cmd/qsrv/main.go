@@ -35,7 +35,7 @@ func run() error {
 	var (
 		addr         = flag.String("addr", envOr("QSRV_ADDR", ":8080"), "listen address")
 		dataDir      = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for qsrv.db (SQLite)")
-		keysFile     = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one API key per line")
+		keysFile     = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one tenant:name:key entry per line (SIGHUP reloads it)")
 		insecure     = flag.Bool("insecure-no-auth", false, "disable authentication (local development only)")
 		tlsCert      = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
 		tlsKey       = flag.String("tls-key", os.Getenv("QSRV_TLS_KEY"), "TLS private key (PEM)")

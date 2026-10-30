@@ -1,7 +1,10 @@
 # HTTP API
 
 All endpoints are under `/v1` and need `Authorization: Bearer <key>`.
-`/healthz` is public. Bodies are JSON; durations are Go strings (`"30s"`,
+`/healthz` is public. Every name in a request is resolved in the tenant of the
+API key, and responses show names the same way: a tenant key uses `orders`,
+an admin key `acme/orders`. Other tenants' queues and topics answer `404`
+(see [API keys and tenants](operations.md#api-keys-and-tenants)). Bodies are JSON; durations are Go strings (`"30s"`,
 `"1m30s"`, `"2160h"`); times are RFC 3339.
 
 ```sh

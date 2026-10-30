@@ -11,8 +11,9 @@ use Romycode\Qsrv\Exception\QsrvException;
 /**
  * Runs against a real qsrv. Start one and export:
  *
- *     QSRV_API_KEYS=$(openssl rand -hex 32) qsrv -data-dir /tmp/qsrv-test -addr 127.0.0.1:18080
- *     export QSRV_TEST_URL=http://127.0.0.1:18080 QSRV_TEST_API_KEY=<same key>
+ *     KEY=$(openssl rand -hex 32)
+ *     QSRV_API_KEYS="test:phpunit:$KEY" qsrv -data-dir /tmp/qsrv-test -addr 127.0.0.1:18080
+ *     export QSRV_TEST_URL=http://127.0.0.1:18080 QSRV_TEST_API_KEY=$KEY
  */
 abstract class IntegrationTestCase extends TestCase
 {

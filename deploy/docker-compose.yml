@@ -1,5 +1,5 @@
-# Single qsrv with a persistent volume. Generate a key first:
-#   echo "QSRV_API_KEYS=$(openssl rand -hex 32)" > .env
+# Single qsrv with a persistent volume. API keys are tenant:name:key entries:
+#   echo "QSRV_API_KEYS=acme:app:$(openssl rand -hex 32)" > .env
 #   docker compose -f deploy/docker-compose.yml up -d
 services:
   qsrv:

@@ -62,6 +62,9 @@ Errors: `ApiException` (HTTP status + API code) with subclasses
 `QueueFullException`, `UnauthorizedException`; `TransportException` when the
 server can't be reached. All implement `Romycode\Qsrv\Exception\QsrvException`.
 
+qsrv is multitenant: use an API key of your tenant and plain queue names
+(`orders`); the server scopes them to the key's tenant.
+
 It uses `symfony/http-client`; pass your own `HttpClientInterface` as the
 third argument (in Symfony, the `http_client` service gets you the profiler).
 
@@ -243,6 +246,7 @@ From `php/` in the qsrv repository:
 ```sh
 composer install
 composer test                                   # unit tests; integration tests are skipped
-QSRV_API_KEYS=$(openssl rand -hex 32) go run ../cmd/qsrv -data-dir /tmp/qsrv-test -addr 127.0.0.1:18080 &
-QSRV_TEST_URL=http://127.0.0.1:18080 QSRV_TEST_API_KEY=$QSRV_API_KEYS composer test
+KEY=$(openssl rand -hex 32)
+QSRV_API_KEYS="test:phpunit:$KEY" go run ../cmd/qsrv -data-dir /tmp/qsrv-test -addr 127.0.0.1:18080 &
+QSRV_TEST_URL=http://127.0.0.1:18080 QSRV_TEST_API_KEY=$KEY composer test
 ```
