@@ -16,7 +16,7 @@ import (
 // End-to-end over HTTP with auth and real fsync: send + receive + ack per op,
 // through the Go client. Includes JSON/base64 encoding and loopback TCP.
 func BenchmarkHTTPCycle(b *testing.B) {
-	auth, err := httpapi.NewAuthenticator([]string{key})
+	auth, err := httpapi.NewAuthenticator([]httpapi.KeyEntry{entry("bench", "b", key)})
 	if err != nil {
 		b.Fatal(err)
 	}

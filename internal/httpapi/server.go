@@ -70,12 +70,12 @@ func New(b *queue.Broker, o Options) http.Handler {
 
 // --- mapping ---
 
-func toAPIQueue(q *queue.Queue) api.Queue {
+func toAPIQueue(sc scope, q *queue.Queue) api.Queue {
 	c := q.Config()
 	st := q.Stats()
 	ret := api.Duration(c.Retention)
 	return api.Queue{
-		Name: q.Name(),
+		Name: sc.local(q.Name()),
 		QueueConfig: api.QueueConfig{
 			VisibilityTimeout: api.Duration(c.VisibilityTimeout),
 			Retry: &api.RetryPolicy{
@@ -84,7 +84,7 @@ func toAPIQueue(q *queue.Queue) api.Queue {
 				MaxBackoff:     api.Duration(c.Retry.MaxBackoff),
 				Multiplier:     c.Retry.Multiplier,
 			},
-			DeadLetterQueue: c.DeadLetterQueue,
+			DeadLetterQueue: sc.local(c.DeadLetterQueue),
 			Ordering:        string(c.Ordering),
 			MaxMessages:     c.MaxMessages,
 			Retention:       &ret,
@@ -100,19 +100,39 @@ func toAPIMessage(m queue.Message) api.Message {
 
 // --- handlers ---
 
-func (s *Server) list(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, api.QueueList{Queues: s.b.List()})
+func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	out := api.QueueList{Queues: []string{}}
+	for _, n := range s.b.List() {
+		if sc.owns(n) {
+			out.Queues = append(out.Queues, sc.local(n))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	name, ok := sc.full(r.PathValue("name"))
+	if !ok {
+		writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "invalid queue name ("+sc.nameHelp()+")")
+		return
+	}
 	var in api.QueueConfig
 	if !s.decode(w, r, &in, 64<<10) {
 		return
 	}
+	dlq := ""
+	if in.DeadLetterQueue != "" {
+		if dlq, ok = sc.full(in.DeadLetterQueue); !ok {
+			writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "invalid dead_letter_queue name ("+sc.nameHelp()+")")
+			return
+		}
+	}
 	cfg := queue.Config{
 		VisibilityTimeout: in.VisibilityTimeout.D(),
 		Retry:             queue.DefaultRetryPolicy(),
-		DeadLetterQueue:   in.DeadLetterQueue,
+		DeadLetterQueue:   dlq,
 		Ordering:          queue.Ordering(in.Ordering),
 		MaxMessages:       in.MaxMessages,
 		Retention:         DefaultRetention,
@@ -128,23 +148,29 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 			Multiplier:     in.Retry.Multiplier,
 		}
 	}
-	q, err := s.b.Create(r.PathValue("name"), cfg)
+	q, err := s.b.Create(name, cfg)
 	if err != nil {
-		writeErr(w, err)
+		writeScopedErr(w, sc, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toAPIQueue(q))
+	writeJSON(w, http.StatusCreated, toAPIQueue(sc, q))
 }
 
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	if q, ok := s.queue(w, r); ok {
-		writeJSON(w, http.StatusOK, toAPIQueue(q))
+		writeJSON(w, http.StatusOK, toAPIQueue(scopeOf(r), q))
 	}
 }
 
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
-	if err := s.b.Delete(r.PathValue("name")); err != nil {
-		writeErr(w, err)
+	sc := scopeOf(r)
+	name, ok := sc.full(r.PathValue("name"))
+	if !ok {
+		writeErr(w, queue.ErrQueueNotFound)
+		return
+	}
+	if err := s.b.Delete(name); err != nil {
+		writeScopedErr(w, sc, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -196,41 +222,79 @@ func (s *Server) readSend(w http.ResponseWriter, r *http.Request) (api.SendReque
 
 // --- topics ---
 
-func toAPITopic(t queue.Topic) api.Topic { return api.Topic{Name: t.Name, Queues: t.Queues} }
+func toAPITopic(sc scope, t queue.Topic) api.Topic {
+	return api.Topic{Name: sc.local(t.Name), Queues: sc.locals(t.Queues)}
+}
 
-func (s *Server) listTopics(w http.ResponseWriter, _ *http.Request) {
+// topicName resolves the {topic} path value; a name outside the scope is
+// reported as not found.
+func (s *Server) topicName(w http.ResponseWriter, r *http.Request, sc scope) (string, bool) {
+	name, ok := sc.full(r.PathValue("topic"))
+	if !ok {
+		writeErr(w, queue.ErrTopicNotFound)
+	}
+	return name, ok
+}
+
+func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
 	out := api.TopicList{Topics: []api.Topic{}}
 	for _, t := range s.b.Topics() {
-		out.Topics = append(out.Topics, toAPITopic(t))
+		if sc.owns(t.Name) {
+			out.Topics = append(out.Topics, toAPITopic(sc, t))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) createTopic(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	name, ok := sc.full(r.PathValue("topic"))
+	if !ok {
+		writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "invalid topic name ("+sc.nameHelp()+")")
+		return
+	}
 	var in api.TopicRequest
 	if !s.decode(w, r, &in, 64<<10) {
 		return
 	}
-	t, err := s.b.CreateTopic(r.PathValue("topic"), in.Queues)
+	queues := make([]string, len(in.Queues))
+	for i, q := range in.Queues {
+		if queues[i], ok = sc.full(q); !ok {
+			writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "invalid queue name "+fmt.Sprintf("%q", q)+" ("+sc.nameHelp()+")")
+			return
+		}
+	}
+	t, err := s.b.CreateTopic(name, queues)
 	if err != nil {
-		writeErr(w, err)
+		writeScopedErr(w, sc, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toAPITopic(t))
+	writeJSON(w, http.StatusCreated, toAPITopic(sc, t))
 }
 
 func (s *Server) getTopic(w http.ResponseWriter, r *http.Request) {
-	t, err := s.b.GetTopic(r.PathValue("topic"))
-	if err != nil {
-		writeErr(w, err)
+	sc := scopeOf(r)
+	name, ok := s.topicName(w, r, sc)
+	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPITopic(t))
+	t, err := s.b.GetTopic(name)
+	if err != nil {
+		writeScopedErr(w, sc, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPITopic(sc, t))
 }
 
 func (s *Server) deleteTopic(w http.ResponseWriter, r *http.Request) {
-	if err := s.b.DeleteTopic(r.PathValue("topic")); err != nil {
-		writeErr(w, err)
+	sc := scopeOf(r)
+	name, ok := s.topicName(w, r, sc)
+	if !ok {
+		return
+	}
+	if err := s.b.DeleteTopic(name); err != nil {
+		writeScopedErr(w, sc, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -245,27 +309,42 @@ func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscription(w http.ResponseWriter, r *http.Request, fn func(topic, queue string) (queue.Topic, error)) {
-	t, err := fn(r.PathValue("topic"), r.PathValue("queue"))
-	if err != nil {
-		writeErr(w, err)
+	sc := scopeOf(r)
+	topic, ok := s.topicName(w, r, sc)
+	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPITopic(t))
+	q, ok := sc.full(r.PathValue("queue"))
+	if !ok {
+		writeErr(w, queue.ErrQueueNotFound)
+		return
+	}
+	t, err := fn(topic, q)
+	if err != nil {
+		writeScopedErr(w, sc, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPITopic(sc, t))
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
+	sc := scopeOf(r)
+	topic, ok := s.topicName(w, r, sc)
+	if !ok {
+		return
+	}
 	in, body, ok := s.readSend(w, r)
 	if !ok {
 		return
 	}
-	pub, err := s.b.Publish(r.PathValue("topic"), body, in.GroupID, in.Delay.D())
+	pub, err := s.b.Publish(topic, body, in.GroupID, in.Delay.D())
 	if err != nil {
-		writeErr(w, err)
+		writeScopedErr(w, sc, err)
 		return
 	}
 	out := api.PublishResponse{Messages: make([]api.PublishedMessage, len(pub))}
 	for i, p := range pub {
-		out.Messages[i] = api.PublishedMessage{Queue: p.Queue, Message: toAPIMessage(p.Message)}
+		out.Messages[i] = api.PublishedMessage{Queue: sc.local(p.Queue), Message: toAPIMessage(p.Message)}
 	}
 	writeJSON(w, http.StatusCreated, out)
 }
@@ -348,16 +427,29 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, &in, 16<<10) {
 		return
 	}
-	req := queue.ReplayRequest{To: in.To, States: in.States, GroupID: in.GroupID, After: in.Cursor, Limit: in.Limit}
+	sc := scopeOf(r)
+	src, ok := sc.full(r.PathValue("name"))
+	if !ok {
+		writeErr(w, queue.ErrQueueNotFound)
+		return
+	}
+	to := ""
+	if in.To != "" {
+		if to, ok = sc.full(in.To); !ok {
+			writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "invalid destination queue name ("+sc.nameHelp()+")")
+			return
+		}
+	}
+	req := queue.ReplayRequest{To: to, States: in.States, GroupID: in.GroupID, After: in.Cursor, Limit: in.Limit}
 	if in.From != nil {
 		req.From = *in.From
 	}
 	if in.Until != nil {
 		req.Until = *in.Until
 	}
-	res, err := s.b.Replay(r.PathValue("name"), req)
+	res, err := s.b.Replay(src, req)
 	if err != nil {
-		writeErr(w, err)
+		writeScopedErr(w, sc, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ReplayResponse{Replayed: res.Replayed, NextCursor: res.Next})
@@ -365,8 +457,15 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request) {
 
 // --- helpers ---
 
+// queue resolves the {name} path value in the request's scope. A name
+// outside the scope is reported as not found.
 func (s *Server) queue(w http.ResponseWriter, r *http.Request) (*queue.Queue, bool) {
-	q, err := s.b.Get(r.PathValue("name"))
+	name, ok := scopeOf(r).full(r.PathValue("name"))
+	if !ok {
+		writeErr(w, queue.ErrQueueNotFound)
+		return nil, false
+	}
+	q, err := s.b.Get(name)
 	if err != nil {
 		writeErr(w, err)
 		return nil, false
@@ -410,6 +509,23 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
+// writeScopedErr is writeErr with the tenant prefix removed from names in the message.
+func writeScopedErr(w http.ResponseWriter, sc scope, err error) {
+	writeErr(&scopedErrWriter{ResponseWriter: w, sc: sc}, err)
+}
+
+type scopedErrWriter struct {
+	http.ResponseWriter
+	sc scope
+}
+
+func (s *scopedErrWriter) Write(b []byte) (int, error) {
+	if _, err := s.ResponseWriter.Write([]byte(s.sc.message(string(b)))); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
 func writeAPIErr(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, api.Error{Error: msg, Code: code})
 }
@@ -433,7 +549,13 @@ func accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
-		next.ServeHTTP(sw, r)
+		inner, id := withIdentitySlot(r)
+		next.ServeHTTP(sw, inner)
+		r.Pattern = inner.Pattern // the mux sets it on the request it got; metrics read it here
+		tenant := id.Tenant
+		if tenant == "" {
+			tenant = AdminTenant
+		}
 		lvl := slog.LevelDebug
 		switch {
 		case sw.status == http.StatusServiceUnavailable:
@@ -444,6 +566,6 @@ func accessLog(next http.Handler) http.Handler {
 			lvl = slog.LevelWarn
 		}
 		slog.Log(r.Context(), lvl, "http", "method", r.Method, "path", r.URL.Path, "status", sw.status,
-			"dur", time.Since(start).Round(time.Microsecond), "remote", r.RemoteAddr)
+			"dur", time.Since(start).Round(time.Microsecond), "remote", r.RemoteAddr, "tenant", tenant, "key", id.Name)
 	})
 }

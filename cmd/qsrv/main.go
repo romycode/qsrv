@@ -33,19 +33,20 @@ func main() {
 
 func run() error {
 	var (
-		addr        = flag.String("addr", envOr("QSRV_ADDR", ":8080"), "listen address")
-		dataDir     = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for qsrv.db (SQLite)")
-		keysFile    = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one API key per line")
-		insecure    = flag.Bool("insecure-no-auth", false, "disable authentication (local development only)")
-		tlsCert     = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
-		tlsKey      = flag.String("tls-key", os.Getenv("QSRV_TLS_KEY"), "TLS private key (PEM)")
-		maxMsg      = flag.Int64("max-message-bytes", 256<<10, "max message size")
-		janitor     = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
-		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
-		metricsAddr = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
-		logLevel    = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")
-		healthcheck = flag.Bool("healthcheck", false, "probe GET /healthz on -addr and exit 0 if healthy (for container health checks)")
-		showVersion = flag.Bool("version", false, "print the version and exit")
+		addr         = flag.String("addr", envOr("QSRV_ADDR", ":8080"), "listen address")
+		dataDir      = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for qsrv.db (SQLite)")
+		keysFile     = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one API key per line")
+		insecure     = flag.Bool("insecure-no-auth", false, "disable authentication (local development only)")
+		tlsCert      = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
+		tlsKey       = flag.String("tls-key", os.Getenv("QSRV_TLS_KEY"), "TLS private key (PEM)")
+		maxMsg       = flag.Int64("max-message-bytes", 256<<10, "max message size")
+		janitor      = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
+		simLatency   = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
+		metricsAddr  = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
+		logLevel     = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")
+		assignTenant = flag.String("assign-tenant", "", "move every queue and topic without a tenant into this tenant, then exit (run with qsrv stopped)")
+		healthcheck  = flag.Bool("healthcheck", false, "probe GET /healthz on -addr and exit 0 if healthy (for container health checks)")
+		showVersion  = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
 
@@ -55,6 +56,19 @@ func run() error {
 	}
 	if *healthcheck {
 		return probe(*addr, *tlsCert != "")
+	}
+	if *assignTenant != "" {
+		lock, err := lockDir(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		nq, nt, err := queue.AssignTenant(*dataDir, *assignTenant)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("moved %d queues and %d topics into tenant %q\n", nq, nt, *assignTenant)
+		return nil
 	}
 
 	var lvl slog.Level
@@ -82,6 +96,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if u := broker.Untenanted(); len(u) > 0 {
+		broker.Close()
+		return fmt.Errorf("%d queues/topics have no tenant (%s...): stop qsrv and run `qsrv -data-dir %s -assign-tenant TENANT` to move them into one",
+			len(u), u[0], *dataDir)
+	}
 	o.RegisterBroker(broker, *dataDir, version)
 
 	// Cancelled on shutdown so long-polls return immediately instead of
@@ -105,6 +124,7 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	reloadKeysOnHUP(ctx, auth, *keysFile)
 
 	errc := make(chan error, 2)
 	var msrv *http.Server
@@ -118,7 +138,7 @@ func run() error {
 		}()
 	}
 	go func() {
-		slog.Info("listening", "version", version, "driver", queue.DriverInfo, "addr", *addr, "tls", *tlsCert != "", "auth", auth != nil, "data_dir", *dataDir)
+		slog.Info("listening", "version", version, "driver", queue.DriverInfo, "addr", *addr, "tls", *tlsCert != "", "auth", auth != nil, "data_dir", *dataDir, "keys", authLen(auth))
 		if *tlsCert != "" {
 			errc <- srv.ListenAndServeTLS(*tlsCert, *tlsKey)
 		} else {
@@ -148,26 +168,75 @@ func run() error {
 	return broker.Close() // commits pending writes
 }
 
-func buildAuth(keysFile string, insecure bool) (*httpapi.Authenticator, error) {
-	if insecure {
-		slog.Warn("AUTHENTICATION DISABLED (-insecure-no-auth)")
-		return nil, nil
-	}
-	var keys []string
+// loadKeys reads the key entries from the keys file and QSRV_API_KEYS.
+func loadKeys(keysFile string) ([]httpapi.KeyEntry, error) {
+	var keys []httpapi.KeyEntry
 	if keysFile != "" {
 		k, err := httpapi.LoadKeysFile(keysFile)
 		if err != nil {
-			return nil, fmt.Errorf("read api keys: %w", err)
+			return nil, fmt.Errorf("api keys file %s: %w", keysFile, err)
 		}
 		keys = append(keys, k...)
 	}
 	if env := os.Getenv("QSRV_API_KEYS"); env != "" {
-		keys = append(keys, strings.Split(env, ",")...)
+		k, err := httpapi.ParseKeys(strings.NewReader(env))
+		if err != nil {
+			return nil, fmt.Errorf("QSRV_API_KEYS: %w", err)
+		}
+		keys = append(keys, k...)
 	}
 	if len(keys) == 0 {
-		return nil, errors.New("no API keys: set QSRV_API_KEYS or -api-keys-file (or -insecure-no-auth for local dev)")
+		return nil, errors.New("no API keys: set QSRV_API_KEYS or -api-keys-file with tenant:name:key entries (or -insecure-no-auth for local dev)")
+	}
+	return keys, nil
+}
+
+func buildAuth(keysFile string, insecure bool) (*httpapi.Authenticator, error) {
+	if insecure {
+		slog.Warn("AUTHENTICATION DISABLED (-insecure-no-auth): every request is an admin")
+		return nil, nil
+	}
+	keys, err := loadKeys(keysFile)
+	if err != nil {
+		return nil, err
 	}
 	return httpapi.NewAuthenticator(keys)
+}
+
+// reloadKeysOnHUP re-reads the keys on SIGHUP. A bad file keeps the current keys.
+func reloadKeysOnHUP(ctx context.Context, auth *httpapi.Authenticator, keysFile string) {
+	if auth == nil {
+		return
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		defer signal.Stop(hup)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				keys, err := loadKeys(keysFile)
+				if err == nil {
+					err = auth.Replace(keys)
+				}
+				if err != nil {
+					slog.Error("reload api keys failed, keeping the current ones", "err", err)
+					continue
+				}
+				slog.Info("api keys reloaded", "keys", auth.Len(), "tenants", tenantCount(keys))
+			}
+		}
+	}()
+}
+
+func tenantCount(keys []httpapi.KeyEntry) int {
+	t := map[string]bool{}
+	for _, k := range keys {
+		t[k.Tenant] = true
+	}
+	return len(t)
 }
 
 func envOr(k, def string) string {
@@ -204,4 +273,11 @@ func probe(addr string, tls bool) error {
 		return fmt.Errorf("healthcheck: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func authLen(a *httpapi.Authenticator) int {
+	if a == nil {
+		return 0
+	}
+	return a.Len()
 }

@@ -19,7 +19,7 @@ var key = strings.Repeat("k", 40)
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	auth, err := httpapi.NewAuthenticator([]string{key})
+	auth, err := httpapi.NewAuthenticator([]httpapi.KeyEntry{entry("test", "suite", key)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,9 +50,36 @@ func TestAuth(t *testing.T) {
 	}
 }
 
-func TestShortKeyRejected(t *testing.T) {
-	if _, err := httpapi.NewAuthenticator([]string{"short"}); err == nil {
-		t.Fatal("short key accepted")
+func entry(tenant, name, secret string) httpapi.KeyEntry {
+	e, err := httpapi.ParseKeyEntry(tenant + ":" + name + ":" + secret)
+	if err != nil {
+		panic(err)
+	}
+	return e
+}
+
+func TestKeyEntries(t *testing.T) {
+	for _, bad := range []string{
+		strings.Repeat("k", 40),                     // no tenant
+		"acme:billing:short",                        // too short
+		"Acme:billing:" + strings.Repeat("k", 40),   // bad tenant
+		"acme:bad name:" + strings.Repeat("k", 40),  // bad key name
+		"acme/x:billing:" + strings.Repeat("k", 40), // slash
+	} {
+		if _, err := httpapi.ParseKeyEntry(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	e, err := httpapi.ParseKeyEntry("*:ops:" + strings.Repeat("k", 40))
+	if err != nil || !e.Admin() || e.Name != "ops" {
+		t.Fatalf("admin entry: %+v %v", e, err)
+	}
+	keys, err := httpapi.ParseKeys(strings.NewReader("# comment\nacme:a:" + strings.Repeat("a", 32) + ", globex:b:" + strings.Repeat("b", 32) + "\n\n"))
+	if err != nil || len(keys) != 2 || keys[1].Tenant != "globex" {
+		t.Fatalf("parse: %+v %v", keys, err)
+	}
+	if _, err := httpapi.NewAuthenticator([]httpapi.KeyEntry{keys[0], keys[0]}); err == nil {
+		t.Fatal("duplicate key accepted")
 	}
 }
 
