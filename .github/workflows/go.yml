@@ -144,6 +144,32 @@ jobs:
           echo "::error::tests failed (see the job summary or the PR comment)"
           exit 1
 
+  crash:
+    # Kills the real qsrv binary with SIGKILL 20 times under load (two
+    # tenants, a topic, producers and consumers) and checks that no confirmed
+    # send is lost and no confirmed ack is redelivered. See internal/e2e.
+    name: Crash test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: SQLite WASM, tags: ""}
+          - {name: SQLite cgo, tags: sqlite_cgo}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: kill -9 under load, 20 rounds
+        env:
+          QSRV_E2E_TAGS: ${{ matrix.tags }}
+          QSRV_E2E_ROUNDS: "20"
+        run: |
+          go test -tags e2e -count=1 -timeout 15m -run Crash -v ./internal/e2e/ | tee crash.txt
+          grep 'rounds with SIGKILL' crash.txt | sed 's/^ *crash_test.go:[0-9]*: /**Crash test (${{ matrix.name }})**: /' >> "$GITHUB_STEP_SUMMARY"
+
   bench:
     name: Performance
     runs-on: ubuntu-latest
