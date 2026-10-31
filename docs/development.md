@@ -40,8 +40,9 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
 
 ## Internals
 
-- SQLite (WAL mode) is the source of truth, one database per tenant
-  (`data-dir/tenants/<tenant>/qsrv.db`, see `internal/queue/stores.go`). One table
+- SQLite (`data-dir/qsrv.db`, WAL mode) is the source of truth, shared by
+  every tenant (names are `tenant/name`; see `internal/queue/stores.go` for
+  why not one database per tenant). One table
   for queues, one for messages (live + history), indexed by `(queue, id)`,
   `(queue, seq)` and `(queue, state, done_at)`.
 - Each database records its schema version in `PRAGMA user_version`
@@ -51,9 +52,8 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
 - Live message **metadata** is kept in memory (heaps for ready/delayed,
   lease expiries, ordering groups); bodies are read from SQLite on delivery.
   Memory is ~200 bytes per live message regardless of body size.
-- Each database has a single writer goroutine that commits all pending
-  operations in one transaction (group commit), and its own reader pool.
-  Every op touches one tenant, so one transaction never spans databases.
+- A single writer goroutine commits all pending operations, of every
+  tenant, in one transaction (group commit). Readers use a separate pool.
 - On startup, live messages are loaded from SQLite; expired leases are
   redelivered on the first operation.
 

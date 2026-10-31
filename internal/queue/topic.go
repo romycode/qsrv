@@ -49,10 +49,7 @@ func (b *Broker) CreateTopic(name string, queues []string) (Topic, error) {
 	if err := b.checkDisk(); err != nil {
 		return Topic{}, err
 	}
-	st, err := b.storeFor(name)
-	if err != nil {
-		return Topic{}, err
-	}
+	st := b.store
 	b.persist.RLock()
 	b.mu.Lock()
 	if _, ok := b.topics[name]; ok {
@@ -106,7 +103,7 @@ func (b *Broker) DeleteTopic(name string) error {
 		return ErrTopicNotFound
 	}
 	delete(b.topics, name)
-	st := b.storeOf(name) // open: the topic exists
+	st := b.store
 	pos := st.append(op{kind: opTopicDelete, queue: name})
 	b.mu.Unlock()
 	b.persist.RUnlock()
@@ -156,7 +153,7 @@ func (b *Broker) updateSubs(topic string, fn func([]string) ([]string, error)) (
 		return Topic{}, err
 	}
 	var pos uint64
-	st := b.storeOf(topic) // open: the topic exists
+	st := b.store
 	if !slices.Equal(next, subs) {
 		b.topics[topic] = next
 		pos = st.append(op{kind: opTopicSet, queue: topic, subs: next, at: b.clock.Now()})
@@ -219,7 +216,7 @@ func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.D
 		m, rec := q.newMessageLocked(body, groupID, delay, now)
 		msgs[i], ops[i] = m, op{kind: opInsert, queue: q.name, msg: rec}
 	}
-	st := b.storeOf(topic)   // every subscriber is in the topic's tenant
+	st := b.store
 	pos := st.appendAll(ops) // one transaction
 	out := make([]Published, len(queues))
 	for i, q := range queues {

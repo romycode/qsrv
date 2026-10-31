@@ -13,16 +13,13 @@ import (
 	"time"
 )
 
-// Snapshots. Every BackupEvery the broker copies every tenant's database
-// into BackupDir/<UTC timestamp>/, in the data dir's layout, so restoring is
-// copying a snapshot over an empty data dir (all tenants, or one tenant's
-// file). Each copy is VACUUM INTO: a consistent, compacted copy taken from a
-// read transaction, without blocking writers. A snapshot is written under a
-// temporary name, fsynced, and renamed when complete: a directory without
-// the prefix is always whole. The newest BackupKeep are kept.
-//
-// Snapshots taken at different moments: each tenant's copy is consistent on
-// its own (tenants never reference each other), not across tenants.
+// Snapshots. Every BackupEvery the broker copies the database into
+// BackupDir/<UTC timestamp>/qsrv.db with a manifest. The copy is VACUUM
+// INTO: consistent (one read transaction) and compacted, without blocking
+// writers. A snapshot is written under a temporary name, fsynced, and
+// renamed when complete: a directory without the prefix is always whole.
+// The newest BackupKeep are kept. Restore everything by copying qsrv.db
+// back, or one tenant with RestoreTenant.
 
 const (
 	snapshotTmpPrefix = ".tmp-"
@@ -60,7 +57,7 @@ type Snapshot struct {
 	Name          string    `json:"name"`
 	TakenAt       time.Time `json:"taken_at"`
 	SchemaVersion int       `json:"schema_version"`
-	Tenants       []string  `json:"tenants"` // "" is the root database
+	Tenants       []string  `json:"tenants"` // tenants with queues or topics ("" = names without one)
 	Bytes         int64     `json:"bytes"`
 }
 
@@ -161,37 +158,25 @@ func (b *Broker) snapshot(dir string, now time.Time) (Snapshot, error) {
 		}
 	}()
 
-	b.storesMu.Lock()
-	if b.closed {
-		b.storesMu.Unlock()
+	if b.closed.Load() {
 		return Snapshot{}, ErrClosed
 	}
-	stores := make(map[string]*store, len(b.stores))
-	for t, st := range b.stores {
-		stores[t] = st
-		snap.Tenants = append(snap.Tenants, t)
+	snap.Tenants = b.tenants()
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return Snapshot{}, err
 	}
-	b.storesMu.Unlock()
-	slices.Sort(snap.Tenants)
-
-	for _, t := range snap.Tenants {
-		rel, _ := filepath.Rel(b.dataDir, storePath(b.dataDir, t))
-		out := filepath.Join(tmp, rel)
-		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-			return Snapshot{}, err
+	out := filepath.Join(tmp, dbFile)
+	if _, err := b.store.r.Exec(`VACUUM INTO ?`, out); err != nil {
+		if b.closed.Load() {
+			return Snapshot{}, ErrClosed
 		}
-		if _, err := stores[t].r.Exec(`VACUUM INTO ?`, out); err != nil {
-			if b.isClosed() {
-				return Snapshot{}, ErrClosed
-			}
-			return Snapshot{}, fmt.Errorf("tenant %q: %w", t, err)
-		}
-		n, err := syncFile(out)
-		if err != nil {
-			return Snapshot{}, fmt.Errorf("tenant %q: %w", t, err)
-		}
-		snap.Bytes += n
+		return Snapshot{}, err
 	}
+	n, err := syncFile(out)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snap.Bytes = n
 
 	m, _ := json.MarshalIndent(snap, "", "  ")
 	if err := os.WriteFile(filepath.Join(tmp, manifestFile), append(m, '\n'), 0o644); err != nil {
@@ -210,10 +195,26 @@ func (b *Broker) snapshot(dir string, now time.Time) (Snapshot, error) {
 	return snap, syncDir(dir)
 }
 
-func (b *Broker) isClosed() bool {
-	b.storesMu.Lock()
-	defer b.storesMu.Unlock()
-	return b.closed
+// tenants lists the tenants that have queues or topics, sorted ("" for
+// names without a tenant).
+func (b *Broker) tenants() []string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	seen := map[string]bool{}
+	for n := range b.queues {
+		t, _ := SplitName(n)
+		seen[t] = true
+	}
+	for n := range b.topics {
+		t, _ := SplitName(n)
+		seen[t] = true
+	}
+	out := make([]string, 0, len(seen))
+	for t := range seen {
+		out = append(out, t)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Snapshots lists finished snapshots in dir, oldest first.

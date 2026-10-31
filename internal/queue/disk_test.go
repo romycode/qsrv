@@ -75,19 +75,19 @@ func TestSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
 	b := openB(t, dir, nil)
 	b.Create("t/q", Config{})
-	if v := countRows(t, b.storeOf("t/q"), `PRAGMA user_version`); v != schemaVersion {
+	if v := countRows(t, b.store, `PRAGMA user_version`); v != schemaVersion {
 		t.Fatalf("user_version %d, want %d", v, schemaVersion)
 	}
 	b.Close()
 
-	st, err := openStore(storePath(dir, "t"), false, func(err error) { panic(err) })
+	st, err := openStore(filepath.Join(dir, dbFile), false, func(err error) { panic(err) })
 	if err != nil {
 		t.Fatal(err)
 	}
 	st.w.Exec(`PRAGMA user_version = 99`)
 	st.close()
 	_, err = Open(dir, Options{OnFatal: func(err error) { panic(err) }})
-	if err == nil || !strings.Contains(err.Error(), "newer than this qsrv supports") || !strings.Contains(err.Error(), filepath.Join("tenants", "t")) {
+	if err == nil || !strings.Contains(err.Error(), "newer than this qsrv supports") {
 		t.Fatalf("open a database from a newer version: %v", err)
 	}
 }
