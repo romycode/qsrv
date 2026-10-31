@@ -88,7 +88,7 @@ jobs:
           done
           docker inspect -f 'health: {{.State.Health.Status}}' qsrv
           [ "$(docker inspect -f '{{.State.Health.Status}}' qsrv)" = healthy ] || { docker logs qsrv; exit 1; }
-          docker exec qsrv qsrv -version
+          docker exec qsrv qsrv -version | tee /dev/stderr | grep -q cgo || { echo "image must use the cgo driver"; exit 1; }
           q() { docker exec -e QSRV_ADDR=http://127.0.0.1:8080 -e QSRV_API_KEY=$key qsrv qctl "$@"; }
           q create smoke
           echo hello | docker exec -i -e QSRV_ADDR=http://127.0.0.1:8080 -e QSRV_API_KEY=$key qsrv qctl send smoke

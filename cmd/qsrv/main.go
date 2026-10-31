@@ -55,7 +55,7 @@ func run() error {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(version)
+		fmt.Printf("%s (SQLite driver: %s)\n", version, queue.DriverInfo)
 		return nil
 	}
 	if *healthcheck {
