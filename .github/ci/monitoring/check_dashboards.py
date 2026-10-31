@@ -36,6 +36,12 @@ def call(method, path, body=None):
         return status, {"message": raw[:300].decode(errors="replace")}
 
 
+def frame_has_data(frame):
+    """A data frame has data when its value column has at least one value."""
+    values = (frame.get("data") or {}).get("values") or []
+    return bool(values) and bool(values[-1])
+
+
 def crash(kind, value, tb):
     import traceback
     msg = "".join(traceback.format_exception(kind, value, tb)).replace("\n", " | ")
@@ -100,7 +106,7 @@ for path in paths:
                 failures.append(f"{uid} / {p['title']} [{t['refId']}]: {status} {r.get('error') or res.get('message')}\n      {expr}")
                 continue
             frames = r.get("frames", [])
-            has_data = any(len(f.get("data", {}).get("values", [[]])[-1] or []) > 0 for f in frames)
+            has_data = any(frame_has_data(f) for f in frames)
             if has_data:
                 ok += 1
             else:
