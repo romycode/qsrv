@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,116 +90,18 @@ func TestOneDatabasePerTenant(t *testing.T) {
 	}
 }
 
-// legacyRoot writes data the way qsrv did before one database per tenant:
-// everything in data-dir/qsrv.db.
-func legacyRoot(t *testing.T, dir string) {
-	t.Helper()
+// A database holds only its own tenant's names: anything else (a file copied
+// into the wrong directory) is refused instead of loaded under the wrong tenant.
+func TestRefusesNamesOfAnotherTenant(t *testing.T) {
+	dir := t.TempDir()
 	st, err := openStore(filepath.Join(dir, "qsrv.db"), false, func(err error) { panic(err) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Unix(1_700_000_000, 0)
-	cfg := Config{VisibilityTimeout: 30 * time.Second, Ordering: OrderingAvailable}
-	withDLQ := cfg
-	withDLQ.DeadLetterQueue = "acme_1/dlq"
-	msg := func(id string, seq uint64, body string) msgRecord {
-		return msgRecord{ID: id, Seq: seq, Body: []byte(body), EnqueuedAt: now, State: stateReady}
-	}
-	st.appendAll([]op{
-		{kind: opCreate, queue: "acme_1/dlq", cfg: cfg, at: now},
-		{kind: opCreate, queue: "acme_1/orders", cfg: withDLQ, at: now},
-		{kind: opCreate, queue: "acme-1/orders", cfg: cfg, at: now}, // '_' must not match '-' (no LIKE)
-		{kind: opCreate, queue: "plain", cfg: cfg, at: now},
-		{kind: opTopicSet, queue: "acme_1/events", subs: []string{"acme_1/orders"}, at: now},
-		{kind: opInsert, queue: "acme_1/orders", msg: msg("m1", 1, "done")},
-		{kind: opInsert, queue: "acme_1/orders", msg: msg("m2", 2, "live")},
-		{kind: opInsert, queue: "acme-1/orders", msg: msg("m1", 1, "other")},
-		{kind: opInsert, queue: "plain", msg: msg("m1", 1, "root")},
-		{kind: opDeliver, queue: "acme_1/orders", id: "m1", lease: "l1", at: now.Add(time.Minute)},
-		{kind: opAck, queue: "acme_1/orders", id: "m1", at: now},
-	})
-	st.sync()
-	if err := st.close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func checkMigrated(t *testing.T, b *Broker) {
-	t.Helper()
-	root := b.storeOf("")
-	if n := countRows(t, root, `SELECT COUNT(*) FROM messages WHERE queue <> 'plain'`); n != 0 {
-		t.Fatalf("root database still has %d tenant messages", n)
-	}
-	if n := countRows(t, root, `SELECT COUNT(*) FROM queues`) + countRows(t, root, `SELECT COUNT(*) FROM topics`); n != 1 {
-		t.Fatalf("root database has %d queues+topics, want only %q", n, "plain")
-	}
-	if n := countRows(t, b.storeOf("acme_1/x"), `SELECT COUNT(*) FROM messages`); n != 2 {
-		t.Fatalf("acme_1 database has %d messages, want 2", n)
-	}
-	if got := b.List(); !slices.Equal(got, []string{"acme-1/orders", "acme_1/dlq", "acme_1/orders", "plain"}) {
-		t.Fatalf("queues %v", got)
-	}
-	o := mustGet(t, b, "acme_1/orders")
-	if o.Config().DeadLetterQueue != "acme_1/dlq" || o.Stats().History != 1 {
-		t.Fatalf("orders: dlq=%q history=%d", o.Config().DeadLetterQueue, o.Stats().History)
-	}
-	if top, err := b.GetTopic("acme_1/events"); err != nil || !slices.Equal(top.Queues, []string{"acme_1/orders"}) {
-		t.Fatalf("topic: %+v %v", top, err)
-	}
-	for q, want := range map[string]string{"acme_1/orders": "live", "acme-1/orders": "other", "plain": "root"} {
-		if got := string(recv(t, mustGet(t, b, q)).Message.Body); got != want {
-			t.Fatalf("%s: got %q, want %q", q, got, want)
-		}
-	}
-	// New messages continue the sequence, after the migrated ones.
-	m, err := o.Send([]byte("new"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.storeOf(o.name).sync()
-	if seq := countRows(t, b.storeOf(o.name), `SELECT seq FROM messages WHERE queue = ? AND id = ?`, o.name, m.ID); seq != 3 {
-		t.Fatalf("send after migration got seq %d, want 3", seq)
-	}
-}
-
-func TestMigrateSingleDatabaseToTenants(t *testing.T) {
-	dir := t.TempDir()
-	legacyRoot(t, dir)
-	b := openB(t, dir, nil)
-	checkMigrated(t, b)
-	b.Close()
-
-	b = openB(t, dir, nil) // nothing left to migrate; state as left
-	defer b.Close()
-	if s := mustGet(t, b, "acme_1/orders").Stats(); s.Messages != 2 || s.InFlight != 1 || s.History != 1 {
-		t.Fatalf("after second open: %+v", s) // "live" leased, "new" ready, "done" in history
-	}
-}
-
-// A crash after a tenant's rows were copied but before they were deleted from
-// the root database: the next start copies again without duplicating.
-func TestMigrationResumesAfterCrash(t *testing.T) {
-	dir := t.TempDir()
-	legacyRoot(t, dir)
-
-	root, err := openStore(filepath.Join(dir, "qsrv.db"), false, func(err error) { panic(err) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "tenants", "acme_1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	st, err := openStore(storePath(dir, "acme_1"), false, func(err error) { panic(err) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n, err := copyTenant(st, filepath.Join(dir, "qsrv.db"), "acme_1"); err != nil || n != 2 {
-		t.Fatalf("copy: %d %v", n, err)
-	}
+	st.waitSync(st.append(op{kind: opCreate, queue: "acme/orders", cfg: Config{VisibilityTimeout: time.Second}}))
 	st.close()
-	root.close() // "crash": rows are now in both databases
 
-	b := openB(t, dir, nil)
-	defer b.Close()
-	checkMigrated(t, b)
+	if _, err := Open(dir, Options{OnFatal: func(err error) { panic(err) }}); err == nil || !strings.Contains(err.Error(), `holds queue "acme/orders"`) {
+		t.Fatalf("open: %v", err)
+	}
 }

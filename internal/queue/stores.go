@@ -18,8 +18,7 @@ import (
 //
 // Layout of the data dir:
 //
-//	qsrv.db                  names without a tenant (tests, embedders, and
-//	                         data from before tenants; see migrateTenants)
+//	qsrv.db                  names without a tenant (tests, embedders)
 //	tenants/<tenant>/qsrv.db one per tenant, created with its first queue or topic
 
 const (
@@ -132,114 +131,4 @@ func (b *Broker) StoreFiles() []StoreFile {
 	b.storesMu.Unlock()
 	slices.SortFunc(out, func(x, y StoreFile) int { return strings.Compare(x.Tenant, y.Tenant) })
 	return out
-}
-
-// tenantRange is the [lo, hi) range of names in tenant t: every name starts
-// with "t/", and '0' is the byte after '/'. Uses the name indexes, and
-// unlike LIKE needs no escaping of '_'.
-func tenantRange(t string) (lo, hi string) { return t + TenantSep, t + "0" }
-
-// migrateTenants moves the queues, topics and messages of every tenant out of
-// the root database into the tenant's own (data written before databases
-// were split per tenant, or renamed by AssignTenant). For each tenant it
-// first copies into the tenant database and commits, then deletes from the
-// root: a crash in between leaves rows in both, and the next run copies them
-// again with INSERT OR IGNORE (same keys) and deletes them. Runs before
-// anything is loaded or served.
-func migrateTenants(root *store, open func(tenant string) (*store, error), rootPath string) ([]string, error) {
-	rows, err := root.r.Query(`SELECT name FROM queues WHERE instr(name, ?) > 0
-		UNION SELECT name FROM topics WHERE instr(name, ?) > 0`, TenantSep, TenantSep)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	var tenants []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if t, _ := SplitName(name); !seen[t] {
-			seen[t] = true
-			tenants = append(tenants, t)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	slices.Sort(tenants)
-
-	for _, t := range tenants {
-		if !ValidTenant(t) {
-			return nil, fmt.Errorf("root database has names in invalid tenant %q", t)
-		}
-		st, err := open(t)
-		if err != nil {
-			return nil, err
-		}
-		n, err := copyTenant(st, rootPath, t)
-		if err != nil {
-			return nil, fmt.Errorf("migrate tenant %q: %w", t, err)
-		}
-		if err := deleteTenant(root, t); err != nil {
-			return nil, fmt.Errorf("migrate tenant %q: clean root database: %w", t, err)
-		}
-		slog.Info("moved tenant to its own database", "tenant", t, "messages", n)
-	}
-	return tenants, nil
-}
-
-// copyTenant copies tenant t's rows from the root database (attached on the
-// tenant store's single writer connection) in one transaction.
-func copyTenant(st *store, rootPath, t string) (int64, error) {
-	if _, err := st.w.Exec(`ATTACH DATABASE ? AS src`, rootPath); err != nil {
-		return 0, err
-	}
-	defer st.w.Exec(`DETACH DATABASE src`)
-
-	lo, hi := tenantRange(t)
-	tx, err := st.w.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO main.queues(name, config, created_at)
-		SELECT name, config, created_at FROM src.queues WHERE name >= ? AND name < ?`, lo, hi); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO main.topics(name, queues, created_at)
-		SELECT name, queues, created_at FROM src.topics WHERE name >= ? AND name < ?`, lo, hi); err != nil {
-		return 0, err
-	}
-	res, err := tx.Exec(`INSERT OR IGNORE INTO main.messages(queue, id, seq, group_id, body, enqueued_at, attempts,
-			state, available_at, lease_id, deadline, done_at, moved_to, replay_of)
-		SELECT queue, id, seq, group_id, body, enqueued_at, attempts,
-			state, available_at, lease_id, deadline, done_at, moved_to, replay_of
-		FROM src.messages WHERE queue >= ? AND queue < ? ORDER BY pk`, lo, hi)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, tx.Commit()
-}
-
-func deleteTenant(root *store, t string) error {
-	lo, hi := tenantRange(t)
-	tx, err := root.w.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, q := range []string{
-		`DELETE FROM messages WHERE queue >= ? AND queue < ?`,
-		`DELETE FROM queues WHERE name >= ? AND name < ?`,
-		`DELETE FROM topics WHERE name >= ? AND name < ?`,
-	} {
-		if _, err := tx.Exec(q, lo, hi); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }

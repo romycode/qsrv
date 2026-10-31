@@ -33,20 +33,19 @@ func main() {
 
 func run() error {
 	var (
-		addr         = flag.String("addr", envOr("QSRV_ADDR", ":8080"), "listen address")
-		dataDir      = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for the SQLite databases (one per tenant)")
-		keysFile     = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one tenant:name:key entry per line (SIGHUP reloads it)")
-		insecure     = flag.Bool("insecure-no-auth", false, "disable authentication (local development only)")
-		tlsCert      = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
-		tlsKey       = flag.String("tls-key", os.Getenv("QSRV_TLS_KEY"), "TLS private key (PEM)")
-		maxMsg       = flag.Int64("max-message-bytes", 256<<10, "max message size")
-		janitor      = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
-		simLatency   = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
-		metricsAddr  = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
-		logLevel     = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")
-		assignTenant = flag.String("assign-tenant", "", "move every queue and topic without a tenant into this tenant, then exit (run with qsrv stopped)")
-		healthcheck  = flag.Bool("healthcheck", false, "probe GET /healthz on -addr and exit 0 if healthy (for container health checks)")
-		showVersion  = flag.Bool("version", false, "print the version and exit")
+		addr        = flag.String("addr", envOr("QSRV_ADDR", ":8080"), "listen address")
+		dataDir     = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for the SQLite databases (one per tenant)")
+		keysFile    = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one tenant:name:key entry per line (SIGHUP reloads it)")
+		insecure    = flag.Bool("insecure-no-auth", false, "disable authentication (local development only)")
+		tlsCert     = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
+		tlsKey      = flag.String("tls-key", os.Getenv("QSRV_TLS_KEY"), "TLS private key (PEM)")
+		maxMsg      = flag.Int64("max-message-bytes", 256<<10, "max message size")
+		janitor     = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
+		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
+		metricsAddr = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
+		logLevel    = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")
+		healthcheck = flag.Bool("healthcheck", false, "probe GET /healthz on -addr and exit 0 if healthy (for container health checks)")
+		showVersion = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
 
@@ -56,19 +55,6 @@ func run() error {
 	}
 	if *healthcheck {
 		return probe(*addr, *tlsCert != "")
-	}
-	if *assignTenant != "" {
-		lock, err := lockDir(*dataDir)
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
-		nq, nt, err := queue.AssignTenant(*dataDir, *assignTenant)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("moved %d queues and %d topics into tenant %q\n", nq, nt, *assignTenant)
-		return nil
 	}
 
 	var lvl slog.Level
@@ -95,11 +81,6 @@ func run() error {
 	broker, err := queue.Open(*dataDir, queue.Options{JanitorEvery: *janitor, SimulatedSyncLatency: *simLatency, Hooks: o.Hooks()})
 	if err != nil {
 		return err
-	}
-	if u := broker.Untenanted(); len(u) > 0 {
-		broker.Close()
-		return fmt.Errorf("%d queues/topics have no tenant (%s...): stop qsrv and run `qsrv -data-dir %s -assign-tenant TENANT` to move them into one",
-			len(u), u[0], *dataDir)
 	}
 	o.RegisterBroker(broker, *dataDir, version)
 

@@ -89,20 +89,11 @@ reload, move the clients, remove the old entry, reload.
 **Access logs** carry `tenant` and `key` (the name). Metrics label queues
 with their full name (`queue="acme/orders"`).
 
-**Upgrading data from before tenants**: qsrv refuses to start while a queue
-or topic has no tenant. Stop it and move them into one:
-
-```sh
-qsrv -data-dir /var/lib/qsrv -assign-tenant acme   # queues, topics, messages, history, DLQs: one transaction
-```
-
-The next start moves them to the tenant's own database (below).
-
 ## Data directory
 
 ```
 data/
-  qsrv.db                    names without a tenant (only from before tenants; empty in normal use)
+  qsrv.db                    names without a tenant: unused by the server (only the Go library uses them)
   tenants/acme/qsrv.db       one database per tenant, each with its -wal and -shm
   tenants/globex/qsrv.db
   .wasmcache/                compiled SQLite (WASM build), safe to delete
@@ -114,14 +105,6 @@ every write is a transaction in exactly one database. On startup qsrv opens
 every `tenants/*/qsrv.db`; each open database costs about 1 MB of memory and
 6 file descriptors (100 tenants: ~100 MB, 600 fds; raise `ulimit -n` if
 needed).
-
-**Upgrading from a single `qsrv.db`**: on the first start of a version with
-per-tenant databases, qsrv moves each tenant's queues, topics and messages
-out of `qsrv.db` into `tenants/<tenant>/qsrv.db`, one tenant at a time (copy
-and commit, then delete from `qsrv.db`; an interrupted move resumes on the
-next start without duplicates). It takes about as long as copying the data;
-take a backup first. `qsrv.db` keeps its size afterwards: reclaim it with
-`sqlite3 data/qsrv.db VACUUM` while qsrv is stopped.
 
 ## Docker
 

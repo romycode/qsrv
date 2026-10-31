@@ -64,8 +64,7 @@ type Options struct {
 }
 
 // Open loads state from the databases in dataDir (see stores.go) and starts
-// the broker. Tenants found in the root database are first moved to their
-// own databases.
+// the broker.
 func Open(dataDir string, o Options) (*Broker, error) {
 	if o.Clock == nil {
 		o.Clock = realClock{}
@@ -102,27 +101,16 @@ func Open(dataDir string, o Options) (*Broker, error) {
 		return nil, err
 	}
 	b.stores[""] = root
-	open := func(t string) (*store, error) {
-		if st := b.stores[t]; st != nil {
-			return st, nil
-		}
-		st, err := b.openStore(t)
-		if err == nil {
-			b.stores[t] = st
-		}
-		return st, err
-	}
-	if _, err := migrateTenants(root, open, storePath(dataDir, "")); err != nil {
-		return fail(fmt.Errorf("split databases per tenant: %w", err))
-	}
 	tenants, err := tenantDirs(dataDir)
 	if err != nil {
 		return fail(err)
 	}
 	for _, t := range tenants {
-		if _, err := open(t); err != nil {
+		st, err := b.openStore(t)
+		if err != nil {
 			return fail(err)
 		}
+		b.stores[t] = st
 	}
 
 	total := 0
@@ -145,6 +133,9 @@ func Open(dataDir string, o Options) (*Broker, error) {
 			total += len(lq.msgs)
 		}
 		for name, subs := range topics {
+			if tt, _ := SplitName(name); tt != t {
+				return fail(fmt.Errorf("database of tenant %q holds topic %q", t, name))
+			}
 			b.topics[name] = subs
 		}
 	}
