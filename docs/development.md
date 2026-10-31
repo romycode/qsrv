@@ -118,18 +118,27 @@ git config core.hooksPath .githooks   # rejects non-conforming messages on commi
 
 The server and the PHP package are versioned independently.
 
-**Server release**: move the `[Unreleased]` entries of `CHANGELOG.md` to a
-`[X.Y.Z] - date` section (in a PR), then tag `main`:
+**Releasing** is the **Tag release** action (Actions → Tag release → Run
+workflow, from `main`):
 
-```sh
-git tag -a v0.1.0 -m "qsrv 0.1.0" && git push origin v0.1.0
-```
+- `server`, `v0.1.0`: needs a `## [0.1.0]` section in `CHANGELOG.md` (move
+  the `[Unreleased]` entries there in a PR first). Tags `main` and starts
+  `release.yml` (binaries for Linux and macOS, `qctl` for Windows, checksums,
+  a GitHub release with that section as notes) and `docker.yml` (the image,
+  tagged `0.1.0`, `0.1` and `latest`).
+- `php`, `v0.1.0`: runs `scripts/release-php.sh v0.1.0` (below). Needs the
+  repository secret `QSRV_PHP_MIRROR_KEY`, set up once:
 
-The tag runs `release.yml` (binaries for Linux and macOS, `qctl` for
-Windows, checksums, a GitHub release with that CHANGELOG section as notes;
-it fails if the section is missing) and `docker.yml` (the image, tagged
-`0.1.0`, `0.1` and `latest`).
+  ```sh
+  ssh-keygen -t ed25519 -N "" -C qsrv-php-mirror -f mirror_key
+  # romycode/qsrv-php → Settings → Deploy keys → Add: mirror_key.pub, "Allow write access"
+  # romycode/qsrv → Settings → Secrets and variables → Actions → New secret:
+  #   QSRV_PHP_MIRROR_KEY = contents of mirror_key
+  rm mirror_key mirror_key.pub
+  ```
 
+Pushing a `vX.Y.Z` tag yourself (`git push origin v0.1.0`) also works: the
+tag push triggers `release.yml` and `docker.yml` directly.
 
 | tag in this repo | releases |
 |---|---|
@@ -138,7 +147,8 @@ it fails if the section is missing) and `docker.yml` (the image, tagged
 
 `php/` is developed here and published to the read-only mirror
 [romycode/qsrv-php](https://github.com/romycode/qsrv-php), which Packagist
-reads, with your own git credentials (no CI secrets), from an up-to-date `main`:
+reads, from an up-to-date `main`, either with the Tag release action (above)
+or locally with your own git credentials:
 
 ```sh
 scripts/release-php.sh v0.2.0   # tags php/v0.2.0 here and v0.2.0 on the mirror

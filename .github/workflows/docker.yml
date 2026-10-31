@@ -30,6 +30,9 @@ on:
       - "go.mod"
       - "go.sum"
       - ".github/workflows/docker.yml"
+  # tag.yml dispatches it on a release tag (a tag pushed with GITHUB_TOKEN
+  # doesn't trigger push workflows); also usable by hand on main.
+  workflow_dispatch:
 
 concurrency:
   group: docker-${{ github.event.pull_request.number || github.ref }}
