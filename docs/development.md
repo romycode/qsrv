@@ -80,28 +80,10 @@ process crash; the page cache survives it, so it does not test power loss
 
 ## CI
 
-One workflow per area, each triggered only when its files change (GitHub
-`paths` filters), on PRs and on pushes to `main`:
-
-| workflow | runs when these change | what it does |
-|---|---|---|
-| `go.yml` | `**.go` (except `examples/`), `go.mod`, `go.sum`, `.github/ci/`, `.github/actions/` | gofmt, `go vet` (both drivers), `go mod verify`, static cross-builds; `go test -race` with the WASM and cgo drivers; coverage vs the PR base; benchmarks (base vs head with `benchstat`) and a `qbench` load test |
-| `php.yml` | `php/`, Go server code (`cmd/`, `internal/`, `pkg/`, `go.mod`, `go.sum`) | PHPUnit, unit and integration against a real qsrv, PHP 8.4/8.5 × Symfony 7.4/8.1 |
-| `docker.yml` | `Dockerfile`, `.dockerignore`, Go server code; every `v*` tag | builds amd64+arm64, smoke-tests the image; pushes to GHCR from `main` and tags |
-| `commits.yml` | every PR (also on title edits) | Conventional Commits: each commit and the PR title |
-
-PHP also runs on server changes because its integration tests run against
-the server. Each workflow edits its own file, so changing a workflow runs it.
-A docs-only PR runs only `commits.yml`.
-
-`go.yml` and `php.yml` keep one comment each on the PR, updated on every run,
-with their results (tests, coverage with delta, performance; PHPUnit per
-version). The same content goes to the run's job summary. Benchmarks report,
-they never fail the build: CI runners share disks and fsync timing is noisy.
-
-If you make checks required in branch protection, require only `commits.yml`
-(or use a ruleset with "skip if not run"): a workflow skipped by its path
-filter never reports, and a required check would wait forever.
+Six GitHub Actions workflows: four check every change (Go, PHP, Docker,
+Commits) and run only when their files change; two publish releases
+(Release, Tag release). What each one does, when it runs and what to do
+when it fails: [ci.md](ci.md).
 
 ## Commits
 
