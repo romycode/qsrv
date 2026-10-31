@@ -137,3 +137,4 @@ running jobs finish. `qctl <command> -h` lists each command's flags.
 | [Operations](docs/operations.md) | configuration, API keys and tenants, Docker, backups, metrics and alerts, sizing |
 | [PHP](php/README.md) | client, Messenger transport, retries with Messenger vs qsrv |
 | [Development](docs/development.md) | tests, benchmarks, CI, commits, releases, internals |
+| [CI](docs/ci.md) | what each GitHub Action does, releases, troubleshooting |
