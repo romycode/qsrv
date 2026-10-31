@@ -13,8 +13,9 @@ Named FIFO queues over HTTP, with:
 - every acknowledged write is **fsynced**: a crash never loses what a client saw.
 
 Clients for **Go** and **PHP**, a **Symfony Messenger** transport, a CLI,
-Prometheus metrics and alerts. Pure Go (SQLite runs as WASM), static binaries
-for any platform.
+Prometheus metrics and alerts. Static binaries: pure Go by default (SQLite
+runs as WASM, cross-compiles anywhere); the Docker image uses native SQLite
+through cgo for less CPU.
 
 ## Quickstart
 

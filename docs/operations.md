@@ -14,10 +14,19 @@ The first start compiles SQLite to native code (~1-1.5s) and caches it in
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o bin/ ./cmd/...   # e.g. Graviton
 ```
 
-Optional cgo driver (`mattn/go-sqlite3`), same behavior and file format:
-`CGO_ENABLED=1 go build -tags sqlite_cgo ./cmd/...` (needs a C toolchain for
-the target). Measured difference over HTTP: ~20% more max throughput on a fast
-local disk, ~10% with 1ms commits, same latency at normal load, ~15MB less RSS.
+cgo driver (`mattn/go-sqlite3`, native SQLite), same behavior and file
+format, used by the Docker image. Measured: ~1.7-1.9x less CPU per operation
+in the storage layer; over HTTP ~20% more max throughput on a fast local disk,
+~10% with 1ms commits, same latency at normal load, ~15MB less RSS, starts in
+~250ms with no compile cache. Static binary (needs a C compiler; musl or glibc):
+
+```sh
+CGO_ENABLED=1 go build -tags sqlite_cgo,sqlite_omit_load_extension,netgo,osusergo -trimpath \
+  -ldflags '-s -w -linkmode external -extldflags "-static"' -o bin/qsrv ./cmd/qsrv
+```
+
+`qsrv -version` prints the driver. Both drivers read and write the same files:
+switching is a redeploy, no migration.
 
 ```sh
 CGO_ENABLED=0 go build -o bin/ ./cmd/...
@@ -109,8 +118,9 @@ needed).
 ## Docker
 
 Multi-arch image (`linux/amd64`, `linux/arm64`) on GitHub Container Registry,
-built from the `Dockerfile`: static binary on `distroless/static`, non-root,
-no shell. It contains `qsrv` and `qctl`.
+built from the `Dockerfile`: `qsrv` with the cgo driver, linked statically
+against musl, on `distroless/static`, non-root, no shell. It contains `qsrv`
+and `qctl`.
 
 | tag | |
 |---|---|
