@@ -25,12 +25,14 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       -o /out/qsrv ./cmd/qsrv \
  && xx-verify --static /out/qsrv \
  && CGO_ENABLED=0 xx-go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/qctl ./cmd/qctl \
- && mkdir -p /out/data
+ && mkdir -p /out/data /out/backup
 
 # distroless/static: CA certificates, tzdata and a nonroot user, no shell.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/qsrv /out/qctl /usr/local/bin/
 COPY --from=build --chown=nonroot:nonroot /out/data /data
+# Snapshots (-backup-dir /backup): a volume mounted here starts writable.
+COPY --from=build --chown=nonroot:nonroot /out/backup /backup
 
 # Configure with the usual flags or env vars. API keys are required, as
 # tenant:name:key entries: QSRV_API_KEYS, or QSRV_API_KEYS_FILE pointing at a

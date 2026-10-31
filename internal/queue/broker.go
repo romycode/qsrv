@@ -122,6 +122,7 @@ func Open(dataDir string, o Options) (*Broker, error) {
 		q.restore(lq)
 		b.queues[lq.name] = q
 		total += len(lq.msgs)
+		o.Hooks.created(lq.name)
 	}
 	slog.Info("recovered", "queues", len(b.queues), "topics", len(b.topics),
 		"live_messages", total, "took", time.Since(start).Round(time.Millisecond))
@@ -182,6 +183,7 @@ func (b *Broker) Create(name string, cfg Config) (*Queue, error) {
 	b.persist.RUnlock()
 
 	st.waitSync(pos)
+	b.hooks.created(name)
 	return q, nil
 }
 
@@ -249,8 +251,11 @@ const (
 // Hooks receive observability callbacks. All are optional and must be cheap
 // and non-blocking: they run on hot paths (Event, Commit outside locks).
 type Hooks struct {
-	OnEvent        func(queue string, ev Event, n int)
-	OnCommit       func(d time.Duration, ops int)
+	OnEvent  func(queue string, ev Event, n int)
+	OnCommit func(d time.Duration, ops int)
+	// OnQueueCreated runs for every queue created, and for every queue
+	// loaded at startup (before Open returns).
+	OnQueueCreated func(queue string)
 	OnQueueDeleted func(queue string)
 }
 
@@ -263,6 +268,12 @@ func (h Hooks) Event(q string, ev Event, n int) {
 func (h Hooks) commit(d time.Duration, ops int) {
 	if h.OnCommit != nil {
 		h.OnCommit(d, ops)
+	}
+}
+
+func (h Hooks) created(q string) {
+	if h.OnQueueCreated != nil {
+		h.OnQueueCreated(q)
 	}
 }
 

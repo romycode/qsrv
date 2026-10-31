@@ -12,6 +12,7 @@ on:
       - "deploy/grafana/**"
       - "deploy/monitoring/**"
       - "internal/obs/**"
+      - "Dockerfile"
       - ".github/ci/monitoring/**"
       - ".github/workflows/monitoring.yml"
   push:
@@ -21,6 +22,7 @@ on:
       - "deploy/grafana/**"
       - "deploy/monitoring/**"
       - "internal/obs/**"
+      - "Dockerfile"
       - ".github/ci/monitoring/**"
       - ".github/workflows/monitoring.yml"
 
@@ -72,7 +74,7 @@ jobs:
           go build -o "$RUNNER_TEMP/bin/" ./cmd/qctl
           key=$(openssl rand -hex 32)
           echo "QSRV_API_KEY=$key" >> "$GITHUB_ENV"
-          echo "QSRV_API_KEYS=ci:load:$key" > deploy/monitoring/.env
+          printf 'QSRV_API_KEYS=ci:load:%s\nQSRV_BACKUP_EVERY=10s\n' "$key" > deploy/monitoring/.env
           docker compose -f deploy/monitoring/docker-compose.yml up -d --quiet-pull
           for _ in $(seq 60); do curl -sf localhost:8080/healthz >/dev/null && curl -sf localhost:3000/api/health >/dev/null && break; sleep 2; done
           curl -sf localhost:8080/healthz && curl -sf localhost:3000/api/health
@@ -80,15 +82,26 @@ jobs:
       - name: Load
         env:
           QSRV_ADDR: http://localhost:8080
-        run: PATH="$RUNNER_TEMP/bin:$PATH" .github/ci/monitoring/load.sh
-
-      - name: Wait for Prometheus to scrape and evaluate the rules
         run: |
-          # Two scrapes and two rule evaluations (15s each) after the load.
-          sleep 35
-          curl -sf 'localhost:9090/api/v1/query?query=sum(qsrv_messages_total)' | grep -q '"result":\[{' \
-            || { echo "Prometheus has no qsrv data"; docker compose -f deploy/monitoring/docker-compose.yml logs prometheus; exit 1; }
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          .github/ci/monitoring/load.sh setup
+          # Prometheus must see the new queues' counters at 0 before the events.
+          until curl -sf 'localhost:9090/api/v1/query?query=qsrv_messages_total{queue="ci/orders",event="dead_lettered"}' | grep -q '"value"'; do sleep 2; done
+          .github/ci/monitoring/load.sh traffic
+
+      - name: Alerts fire
+        run: |
+          # QsrvDeadLetters has no 'for': it fires on the first evaluation that
+          # sees the dead letters. This checks counters, rules and Prometheus end to end.
+          for _ in $(seq 45); do
+            curl -sf 'localhost:9090/api/v1/alerts' | grep -q '"alertname":"QsrvDeadLetters".*"state":"firing"' && break
+            sleep 2
+          done
+          curl -sf 'localhost:9090/api/v1/alerts' | grep -q '"alertname":"QsrvDeadLetters".*"state":"firing"' \
+            || { echo "::error::QsrvDeadLetters did not fire"; curl -s localhost:9090/api/v1/alerts; exit 1; }
           echo "rules loaded: $(curl -sf localhost:9090/api/v1/rules | grep -o '"name":"Qsrv[A-Za-z]*"' | sort -u | wc -l) alerts"
+          # One more scrape for the panels (and the snapshot metrics, every 10s).
+          sleep 20
 
       - name: Every panel query through Grafana
         run: python3 .github/ci/monitoring/check_dashboards.py http://localhost:3000 deploy/grafana/dashboards/*.json

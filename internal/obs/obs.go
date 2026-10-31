@@ -68,6 +68,14 @@ func (o *Obs) Hooks() queue.Hooks {
 			o.commitDur.With().Observe(d.Seconds())
 			o.commitOps.With().Observe(float64(ops))
 		},
+		// Every event counter of a queue exists, at 0, from the start: rate()
+		// and increase() need a sample before the first event, or the first
+		// dead letters of a queue would never show up (nor alert).
+		OnQueueCreated: func(q string) {
+			for _, name := range eventNames {
+				o.events.With(metrics.L("queue", q), metrics.L("event", name))
+			}
+		},
 		OnQueueDeleted: func(q string) { o.Reg.Forget("queue", q) },
 	}
 }
