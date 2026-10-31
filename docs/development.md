@@ -127,15 +127,20 @@ workflow, from `main`):
   a GitHub release with that section as notes) and `docker.yml` (the image,
   tagged `0.1.0`, `0.1` and `latest`).
 - `php`, `v0.1.0`: runs `scripts/release-php.sh v0.1.0` (below). Needs the
-  repository secret `QSRV_PHP_MIRROR_KEY`, set up once:
+  repository secret `QSRV_PHP_MIRROR_KEY` (a deploy key of the mirror).
 
-  ```sh
-  ssh-keygen -t ed25519 -N "" -C qsrv-php-mirror -f mirror_key
-  # romycode/qsrv-php → Settings → Deploy keys → Add: mirror_key.pub, "Allow write access"
-  # romycode/qsrv → Settings → Secrets and variables → Actions → New secret:
-  #   QSRV_PHP_MIRROR_KEY = contents of mirror_key
-  rm mirror_key mirror_key.pub
-  ```
+**One-time setup**, from your machine with the `gh` CLI logged in as an
+admin of both repos (idempotent, safe to re-run):
+
+```sh
+scripts/setup-release.sh                     # merge settings, mirror deploy key + secret
+PACKAGIST_USERNAME=you PACKAGIST_TOKEN=... \
+  scripts/setup-release.sh                   # also registers the package on Packagist + webhook
+scripts/setup-release.sh --rotate-key        # replace the deploy key (old one removed last)
+```
+
+The only thing without an API: make the image public once it exists
+(GitHub → Packages → qsrv → Settings → Change visibility).
 
 Pushing a `vX.Y.Z` tag yourself (`git push origin v0.1.0`) also works: the
 tag push triggers `release.yml` and `docker.yml` directly.
