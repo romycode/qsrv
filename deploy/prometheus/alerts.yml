@@ -169,7 +169,7 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: "SQLite WAL is {{ $value | humanize1024 }}B"
+          summary: "SQLite WAL of tenant {{ $labels.tenant }} is {{ $value | humanize1024 }}B"
           description: "Checkpoints are not keeping up (a long-running reader, e.g. a big replay or a backup tool holding a read transaction)."
 
   - name: qsrv.process

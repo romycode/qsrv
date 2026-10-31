@@ -7,7 +7,8 @@ How qsrv behaves, and what you can rely on. For the endpoints see
 
 Every queue and topic belongs to a tenant, and every API key to one tenant:
 a key only sees its tenant's queues and topics, and two tenants can use the
-same names. Admin keys see all tenants. Details and key format in
+same names. Admin keys see all tenants. Each tenant's data lives in its own
+SQLite database. Details and key format in
 [operations.md](operations.md#api-keys-and-tenants).
 
 ## Queues

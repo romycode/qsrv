@@ -5,7 +5,6 @@ package obs
 import (
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
@@ -132,10 +131,12 @@ func (o *Obs) RegisterBroker(b *queue.Broker, dataDir, version string) {
 		emit(float64(b.PendingWrites()))
 	})
 
-	o.Reg.Gauge("qsrv_db_size_bytes", "SQLite files on disk.", func(emit func(float64, ...metrics.Label)) {
-		for _, f := range []struct{ suffix, label string }{{"", "db"}, {"-wal", "wal"}} {
-			if st, err := os.Stat(filepath.Join(dataDir, "qsrv.db"+f.suffix)); err == nil {
-				emit(float64(st.Size()), L("file", f.label))
+	o.Reg.Gauge("qsrv_db_size_bytes", "SQLite files on disk, per tenant database (tenant \"\" is the root database).", func(emit func(float64, ...metrics.Label)) {
+		for _, db := range b.StoreFiles() {
+			for _, f := range []struct{ suffix, label string }{{"", "db"}, {"-wal", "wal"}} {
+				if st, err := os.Stat(db.Path + f.suffix); err == nil {
+					emit(float64(st.Size()), L("tenant", db.Tenant), L("file", f.label))
+				}
 			}
 		}
 	})
