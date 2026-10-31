@@ -1,0 +1,10 @@
+# Loads the qsrv dashboards (deploy/grafana/dashboards) into a "qsrv" folder.
+apiVersion: 1
+providers:
+  - name: qsrv
+    folder: qsrv
+    type: file
+    allowUiUpdates: true # edits in the UI are kept until the files change
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards/qsrv

@@ -76,7 +76,11 @@ func TestMetricsEndToEnd(t *testing.T) {
 		`qsrv_messages_total{queue="t/jobs",event="expired"} 1`,
 		`qsrv_messages_total{queue="t/jobs",event="dead_lettered"} 1`,
 		`qsrv_messages_total{queue="t/dlq",event="dead_letter_in"} 1`,
+		// Created at 0 with the queue, so increase() sees the first event.
+		`qsrv_messages_total{queue="t/jobs",event="dropped"} 0`,
+		`qsrv_messages_total{queue="t/dlq",event="dead_lettered"} 0`,
 		`qsrv_queue_messages{queue="t/jobs",state="ready"} 1`,
+		`qsrv_queue_messages{queue="t/jobs",state="waiting"} 0`,
 		`qsrv_queue_messages{queue="t/dlq",state="ready"} 1`,
 		`qsrv_queue_max_messages{queue="t/jobs"} 100`,
 		`qsrv_queue_oldest_message_age_seconds{queue="t/jobs"} 36`,
@@ -122,4 +126,26 @@ func TestConcurrentScrapes(t *testing.T) {
 	}
 	wg.Wait()
 	_ = http.StatusOK
+}
+
+// Queues loaded at startup get their counters at 0 too, before any event.
+func TestCountersExistFromStartup(t *testing.T) {
+	dir := t.TempDir()
+	b, err := queue.Open(dir, queue.Options{NoSync: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Create("t/old", queue.Config{})
+	b.Close()
+
+	o := obs.New()
+	b, err = queue.Open(dir, queue.Options{NoSync: true, Hooks: o.Hooks()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	o.RegisterBroker(b, dir, "test")
+	if out := scrape(t, o); !strings.Contains(out, `qsrv_messages_total{queue="t/old",event="dead_lettered"} 0`) {
+		t.Fatalf("no zero counter for a queue loaded at startup:\n%s", out)
+	}
 }

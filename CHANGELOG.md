@@ -18,6 +18,19 @@ API or the data format (always called out here).
   look at messages without receiving them; `GET /v1/overview` returns every
   queue and topic of the key in one call. Go client: `PeekMessages`,
   `PeekMessage`, `Overview`.
+- Grafana dashboards (overview, one queue, alerts) in `deploy/grafana`,
+  with provisioning, and `deploy/monitoring`: qsrv, Prometheus,
+  Alertmanager and Grafana in one compose file.
+- `qsrv_queue_messages{state="waiting"}`: messages behind the head of their
+  ordering group. The four states now add up to the queue's messages.
+- The Docker image has a `/backup` directory owned by its user: a volume
+  mounted there for `-backup-dir` is writable without a `chown`.
+
+### Fixed
+- `qsrv_messages_total` series now exist at 0 from the moment a queue is
+  created or loaded. Before, a series appeared with its first event, so
+  `increase()` and `rate()` missed it: the first dead letters of a queue (or
+  after a restart) didn't trigger `QsrvDeadLetters`.
 
 ## [0.1.0] - 2026-11-01
 

@@ -1,0 +1,12 @@
+# Grafana data source for the qsrv dashboards. Adjust the URL to your
+# Prometheus; in deploy/monitoring it is the "prometheus" service.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s # the scrape interval: $__rate_interval is derived from it

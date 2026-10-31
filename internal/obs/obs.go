@@ -68,6 +68,14 @@ func (o *Obs) Hooks() queue.Hooks {
 			o.commitDur.With().Observe(d.Seconds())
 			o.commitOps.With().Observe(float64(ops))
 		},
+		// Every event counter of a queue exists, at 0, from the start: rate()
+		// and increase() need a sample before the first event, or the first
+		// dead letters of a queue would never show up (nor alert).
+		OnQueueCreated: func(q string) {
+			for _, name := range eventNames {
+				o.events.With(metrics.L("queue", q), metrics.L("event", name))
+			}
+		},
 		OnQueueDeleted: func(q string) { o.Reg.Forget("queue", q) },
 	}
 }
@@ -90,7 +98,7 @@ func (o *Obs) RegisterBroker(b *queue.Broker, dataDir, version string) {
 	}
 	var snaps []qsnap
 	var at time.Time
-	o.Reg.Gauge("qsrv_queue_messages", "Live messages by state (ready, delayed, in_flight).", func(emit func(float64, ...metrics.Label)) {
+	o.Reg.Gauge("qsrv_queue_messages", "Live messages by state: ready, delayed, in_flight, and waiting (behind the head of their ordering group). They add up to the queue's messages.", func(emit func(float64, ...metrics.Label)) {
 		snaps, at = snaps[:0], b.Now()
 		for _, q := range b.Queues() {
 			snaps = append(snaps, qsnap{q.Name(), q.Config(), q.Live()})
@@ -99,6 +107,7 @@ func (o *Obs) RegisterBroker(b *queue.Broker, dataDir, version string) {
 			emit(float64(s.live.Ready), L("queue", s.name), L("state", "ready"))
 			emit(float64(s.live.Delayed), L("queue", s.name), L("state", "delayed"))
 			emit(float64(s.live.InFlight), L("queue", s.name), L("state", "in_flight"))
+			emit(float64(max(0, s.live.Messages-s.live.Ready-s.live.Delayed-s.live.InFlight)), L("queue", s.name), L("state", "waiting"))
 		}
 	})
 	o.Reg.Gauge("qsrv_queue_groups", "Ordering groups with live messages.", func(emit func(float64, ...metrics.Label)) {

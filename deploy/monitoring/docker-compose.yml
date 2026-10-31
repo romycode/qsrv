@@ -1,0 +1,60 @@
+# qsrv with Prometheus, Alertmanager and Grafana, dashboards and alerts
+# provisioned. From the repository root:
+#   echo "QSRV_API_KEYS=acme:app:$(openssl rand -hex 32)" > deploy/monitoring/.env
+#   docker compose -f deploy/monitoring/docker-compose.yml up -d
+# Grafana http://localhost:3000 (admin / admin, change it), Prometheus :9090,
+# Alertmanager :9093, qsrv API :8080. Everything but the API binds to localhost.
+services:
+  qsrv:
+    image: ${QSRV_IMAGE:-ghcr.io/romycode/qsrv:latest}
+    restart: unless-stopped
+    environment:
+      QSRV_API_KEYS: ${QSRV_API_KEYS:?set QSRV_API_KEYS in deploy/monitoring/.env}
+      QSRV_BACKUP_DIR: /backup # snapshots; in production put this volume on another disk
+      QSRV_BACKUP_EVERY: ${QSRV_BACKUP_EVERY:-1h}
+    ports:
+      - "8080:8080"
+    volumes:
+      - qsrv-data:/data
+      - qsrv-backup:/backup
+    stop_grace_period: 30s
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.30.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:13.2.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/qsrv/qsrv-overview.json
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards/qsrv:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  qsrv-data:
+  qsrv-backup:
+  prometheus-data:
+  grafana-data:

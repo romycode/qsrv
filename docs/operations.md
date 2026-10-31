@@ -247,7 +247,7 @@ Ready-to-use rules in `deploy/prometheus/alerts.yml` (thresholds marked `TUNE`).
 | Metric | Type | What it tells you |
 |---|---|---|
 | `qsrv_queue_oldest_message_age_seconds{queue}` | gauge | **The** health signal: how long the oldest live message has waited |
-| `qsrv_queue_messages{queue,state}` | gauge | ready / delayed / in_flight |
+| `qsrv_queue_messages{queue,state}` | gauge | ready / delayed / in_flight / waiting (behind its ordering group); they add up to the queue's messages |
 | `qsrv_queue_groups{queue}` | gauge | ordering groups with live messages |
 | `qsrv_messages_total{queue,event}` | counter | sent, dead_letter_in, replay_in, delivered, redelivered, acked, nacked, expired, dead_lettered, dropped |
 | `qsrv_store_commit_duration_seconds` | histogram | commit + fsync latency (disk health; every op waits for it) |
@@ -257,7 +257,7 @@ Ready-to-use rules in `deploy/prometheus/alerts.yml` (thresholds marked `TUNE`).
 | `qsrv_http_request_duration_seconds{route}` | histogram | receive includes long-poll wait |
 | `qsrv_disk_free_bytes`, `qsrv_disk_size_bytes`, `qsrv_db_size_bytes{file}` | gauge | capacity planning, WAL growth |
 | `qsrv_storage_low` | gauge | 1 while sends are refused for lack of disk |
-| `qsrv_backup_last_success_timestamp_seconds`, `qsrv_backup_failures`, `qsrv_backup_last_duration_seconds`, `qsrv_backup_last_size_bytes` | gauge | snapshots (only with `-backup-dir`) |
+| `qsrv_backup_last_success_timestamp_seconds`, `qsrv_backup_interval_seconds`, `qsrv_backup_failures`, `qsrv_backup_last_duration_seconds`, `qsrv_backup_last_size_bytes` | gauge | snapshots (only with `-backup-dir`) |
 | `qsrv_queue_info`, `qsrv_queue_max_messages`, `qsrv_build_info`, `qsrv_start_time_seconds`, process/Go stats | gauge | context for alerts |
 
 Alerts included: down, restart loop, 5xx ratio, messages too old (warning /
@@ -268,6 +268,41 @@ growth, memory. DLQs are excluded from the "too old" and "no consumers"
 alerts via the `qsrv:dlq:is_dlq` recording rule.
 
 Validate before deploying: `promtool check rules deploy/prometheus/alerts.yml`.
+
+### Grafana dashboards
+
+Three dashboards in `deploy/grafana/dashboards/`, linked to each other, with
+the alerts that fired drawn as annotations on every graph:
+
+| dashboard | for |
+|---|---|
+| **qsrv / Overview** | Is it healthy? Up, version, alerts firing, messages waiting, oldest message, disk. Oldest message age per queue, messages by queue and by state (ready, waiting in group, delayed, in flight), throughput, failures, dead letter queues, a table of every queue now (click one for its dashboard). Storage: commit latency, group commit, writes waiting for the disk, free space and where it is heading, database and WAL size. Snapshots. HTTP: requests, 429/5xx, p99 latency. Memory and goroutines. |
+| **qsrv / Queue** | One queue: its counts, settings (DLQ, retries, ordering), capacity used, failures; over time its states, oldest message, throughput in and out, failures, redelivery ratio, ordering groups. |
+| **qsrv / Alerts** | Alerts firing and pending now with their labels, which fired in the time range and when, and what each alert means and what to do. |
+
+Variables: Prometheus data source, job, instance, tenant and queue (the
+overview takes several; the queue dashboard one). They need Grafana 11 or
+later and the `job="qsrv"` scrape job the alert rules expect; the
+"oldest message" and DLQ panels use the `qsrv:dlq:is_dlq` recording rule
+from `alerts.yml`.
+
+**Import** them (Dashboards → New → Import, pick the Prometheus data
+source), or **provision** them: `deploy/grafana/provisioning/` has the data
+source and a provider that loads the folder.
+
+**The whole stack** in one command, provisioned: qsrv, Prometheus with the
+alert rules, Alertmanager (receivers to fill in) and Grafana with the
+dashboards:
+
+```sh
+echo "QSRV_API_KEYS=acme:app:$(openssl rand -hex 32)" > deploy/monitoring/.env
+docker compose -f deploy/monitoring/docker-compose.yml up -d
+# Grafana http://localhost:3000 (admin / admin), Prometheus :9090, Alertmanager :9093
+```
+
+Alertmanager ships with commented Slack and email receivers, and with
+inhibitions: `QsrvDown` silences the rest of that instance's alerts, and a
+critical alert its own warning.
 
 ## Performance
 

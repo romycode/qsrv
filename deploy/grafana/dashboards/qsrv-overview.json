@@ -1,0 +1,2823 @@
+{
+  "uid": "qsrv-overview",
+  "title": "qsrv / Overview",
+  "description": "Health, queues, storage, backups and HTTP of qsrv.",
+  "tags": [
+    "qsrv"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "schemaVersion": 39,
+  "version": 1,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "weekStart": "",
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": []
+      },
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(qsrv_build_info, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery",
+          "qryType": 1
+        },
+        "definition": "label_values(qsrv_build_info, job)",
+        "regex": "",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "description": "",
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(qsrv_build_info{job=~\"$job\"}, instance)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery",
+          "qryType": 1
+        },
+        "definition": "label_values(qsrv_build_info{job=~\"$job\"}, instance)",
+        "regex": "",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "description": "",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "allValue": ".+"
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(qsrv_queue_info{job=~\"$job\", instance=~\"$instance\"}, queue)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery",
+          "qryType": 1
+        },
+        "definition": "label_values(qsrv_queue_info{job=~\"$job\", instance=~\"$instance\"}, queue)",
+        "regex": "/^([^/]+)\\//",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "description": "The part of queue names before the slash.",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "allValue": ".+"
+      },
+      {
+        "name": "queue",
+        "label": "Queue",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(qsrv_queue_info{job=~\"$job\", instance=~\"$instance\", queue=~\"($tenant)/.+\"}, queue)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery",
+          "qryType": 1
+        },
+        "definition": "label_values(qsrv_queue_info{job=~\"$job\", instance=~\"$instance\", queue=~\"($tenant)/.+\"}, queue)",
+        "regex": "",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "description": "",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "allValue": ".+"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "iconColor": "red",
+        "name": "qsrv alerts firing",
+        "expr": "ALERTS{alertname=~\"Qsrv.*\", alertstate=\"firing\"}",
+        "step": "60s",
+        "titleFormat": "{{alertname}}",
+        "textFormat": "{{queue}}{{instance}} severity={{severity}}",
+        "tagKeys": "severity,alertname",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "qsrv dashboards",
+      "type": "dashboards",
+      "tags": [
+        "qsrv"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link"
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Health",
+      "id": 1,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Up",
+      "description": "Prometheus can scrape qsrv.",
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min(up{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Up",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "description": "",
+      "id": 3,
+      "gridPos": {
+        "x": 3,
+        "y": 1,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min(time() - qsrv_start_time_seconds{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Version",
+      "description": "qsrv version, SQLite driver (cgo or WASM) and Go version: hover the value.",
+      "id": 4,
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_build_info{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{version}}",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Alerts firing",
+      "description": "qsrv alerts firing now (from deploy/prometheus/alerts.yml).",
+      "id": 5,
+      "gridPos": {
+        "x": 10,
+        "y": 1,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "count(ALERTS{alertname=~\"Qsrv.*\", alertstate=\"firing\"}) or vector(0)",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "links": [
+            {
+              "title": "Alerts",
+              "url": "/d/qsrv-alerts?${__url_time_range}&${__all_variables}"
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Waiting",
+      "description": "Messages in the selected queues not being processed: ready, delayed, or waiting behind their ordering group.",
+      "id": 6,
+      "gridPos": {
+        "x": 13,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", state!=\"in_flight\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Oldest message",
+      "description": "Longest any message has waited, over the selected queues, dead letter queues excluded. Above 5m (amber) or 1h (red), something is not being consumed.",
+      "id": 7,
+      "gridPos": {
+        "x": 17,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(qsrv_queue_oldest_message_age_seconds{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\"} unless on (queue) qsrv:dlq:is_dlq) or vector(0)",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#e0a020",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Disk free",
+      "description": "",
+      "id": 8,
+      "gridPos": {
+        "x": 21,
+        "y": 1,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min(qsrv_disk_free_bytes{job=~\"$job\", instance=~\"$instance\"} / qsrv_disk_size_bytes{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#e0a020",
+                "value": 0.05
+              },
+              {
+                "color": "green",
+                "value": 0.15
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "row",
+      "title": "Queues",
+      "id": 9,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Oldest message age",
+      "description": "Per queue (dead letter queues excluded). The most useful signal: a line that only goes up is a queue nobody consumes, or a group blocked by a failing message.",
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_queue_oldest_message_age_seconds{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\"} unless on (queue) qsrv:dlq:is_dlq",
+          "legendFormat": "{{queue}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#e0a020",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages by queue",
+      "description": "Live messages (ready, delayed, in flight, waiting) per queue.",
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\"})",
+          "legendFormat": "{{queue}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 35,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages by state",
+      "description": "ready: deliverable now. delayed: scheduled or backing off after a failure. in_flight: leased to a consumer. waiting: behind the head of its ordering group.",
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (state) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\"})",
+          "legendFormat": "{{state}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 35,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ready"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0b7a75"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delayed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e0a020"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "in_flight"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#6f62f5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "waiting"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8b96a5"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput",
+      "description": "Messages per second sent, delivered (including redeliveries) and acked.",
+      "id": 13,
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (event) (rate(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"sent|delivered|acked\"}[$__rate_interval]))",
+          "legendFormat": "{{event}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Failures",
+      "description": "nacked: a consumer reported a failure. expired: a lease ran out (consumer crashed or too slow). dead_lettered: retries exhausted, moved to the DLQ. dropped: retries exhausted, no DLQ.",
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (event) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"nacked|expired|dead_lettered|dropped\"}[$__interval]))",
+          "legendFormat": "{{event}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "interval": "1m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dead_lettered"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dropped"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "expired"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e0a020"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nacked"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8b96a5"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Dead letter queues",
+      "description": "Messages waiting in dead letter queues: failures someone has to look at (admin UI, or qctl replay). Needs the recording rule in alerts.yml.",
+      "id": 15,
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\"}) and on (queue) qsrv:dlq:is_dlq",
+          "legendFormat": "{{queue}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Queues now",
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", state=\"ready\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", state=\"delayed\"})",
+          "legendFormat": "__auto",
+          "refId": "B",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", state=\"in_flight\"})",
+          "legendFormat": "__auto",
+          "refId": "C",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (qsrv_queue_messages{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", state=\"waiting\"})",
+          "legendFormat": "__auto",
+          "refId": "D",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (queue) (qsrv_queue_oldest_message_age_seconds{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\"})",
+          "legendFormat": "__auto",
+          "refId": "E",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (rate(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=\"acked\"}[5m]))",
+          "legendFormat": "__auto",
+          "refId": "F",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (queue) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"dead_lettered|dropped\"}[1h]))",
+          "legendFormat": "__auto",
+          "refId": "G",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "description": "Current state of every selected queue. Click a queue for its own dashboard.",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "Ready",
+              "Value #B": "Delayed",
+              "Value #C": "In flight",
+              "Value #D": "Waiting in group",
+              "Value #E": "Oldest",
+              "Value #F": "Acked/s (5m)",
+              "Value #G": "Failed (1h)",
+              "queue": "Queue"
+            },
+            "indexByName": {
+              "queue": 0,
+              "Value #A": 1,
+              "Value #D": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #E": 5,
+              "Value #F": 6,
+              "Value #G": 7
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Queue"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Queue dashboard",
+                    "url": "/d/qsrv-queue?var-queue=${__value.raw}&${datasource:queryparam}&${job:queryparam}&${instance:queryparam}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Oldest"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#e0a020",
+                      "value": 300
+                    },
+                    {
+                      "color": "red",
+                      "value": 3600
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Acked/s (5m)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed (1h)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Oldest",
+            "desc": true
+          }
+        ],
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Storage",
+      "id": 17,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Commit latency",
+      "description": "Transaction + fsync. Every send and ack waits for it: this is the disk's health. A few ms on SSD; tens of ms on network disks.",
+      "id": 18,
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(qsrv_store_commit_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(qsrv_store_commit_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "refId": "B",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Group commit",
+      "description": "Operations share transactions and fsyncs when they arrive together. More ops per commit = the disk is busy and batching works.",
+      "id": 19,
+      "gridPos": {
+        "x": 8,
+        "y": 41,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(qsrv_store_commit_duration_seconds_count{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "commits/s",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(qsrv_store_commit_batch_ops_sum{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) / sum(rate(qsrv_store_commit_batch_ops_count{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "ops per commit",
+          "refId": "B",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ops per commit"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Writes waiting for the disk",
+      "description": "Operations queued for the writer. Sustained above 0 means the disk can't keep up.",
+      "id": 20,
+      "gridPos": {
+        "x": 16,
+        "y": 41,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(qsrv_store_pending_writes{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "pending",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk",
+      "description": "Free space on the data dir's filesystem, and where it is heading. Below -min-free-disk qsrv refuses new messages.",
+      "id": 21,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_disk_free_bytes{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "free {{instance}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "predict_linear(qsrv_disk_free_bytes{job=~\"$job\", instance=~\"$instance\"}[6h], 3 * 24 * 3600)",
+          "legendFormat": "free in 3 days at this rate",
+          "refId": "B",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Database files",
+      "description": "qsrv.db (live messages + history) and its WAL. A growing WAL means checkpoints are blocked by a long reader.",
+      "id": 22,
+      "gridPos": {
+        "x": 8,
+        "y": 49,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_db_size_bytes{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{file}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Refusing sends (disk low)",
+      "description": "1 while free disk is below -min-free-disk: sends get 503 storage_full, consumers keep draining.",
+      "id": 23,
+      "gridPos": {
+        "x": 16,
+        "y": 49,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(qsrv_storage_low{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "storage low",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Backups",
+      "id": 24,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Last snapshot",
+      "description": "How long ago the last complete snapshot was taken. No data: snapshots are off (-backup-dir) or none finished yet.",
+      "id": 25,
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min(time() - qsrv_backup_last_success_timestamp_seconds{job=~\"$job\", instance=~\"$instance\"} > 0)",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Snapshot interval",
+      "description": "",
+      "id": 26,
+      "gridPos": {
+        "x": 6,
+        "y": 58,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(qsrv_backup_interval_seconds{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Last snapshot size",
+      "description": "",
+      "id": 27,
+      "gridPos": {
+        "x": 12,
+        "y": 58,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(qsrv_backup_last_size_bytes{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Snapshot failures since start",
+      "description": "",
+      "id": 28,
+      "gridPos": {
+        "x": 18,
+        "y": 58,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(qsrv_backup_failures{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "type": "row",
+      "title": "HTTP API",
+      "id": 29,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by route",
+      "description": "",
+      "id": 30,
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (route) (rate(qsrv_http_requests_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{route}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors",
+      "description": "429: a queue is full (max_messages). 503: shutting down or storage_full. 500: internal error, check the logs.",
+      "id": 31,
+      "gridPos": {
+        "x": 12,
+        "y": 63,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (code) (rate(qsrv_http_requests_total{job=~\"$job\", instance=~\"$instance\", code=~\"429|5..\"}[$__rate_interval]))",
+          "legendFormat": "{{code}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency p99 by route",
+      "description": "Receive is left out: with long polling it waits on purpose.",
+      "id": 32,
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, route) (rate(qsrv_http_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", route!~\".*/receive\"}[$__rate_interval])))",
+          "legendFormat": "{{route}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Process",
+      "id": 33,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 79,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory",
+      "description": "Grows with live messages (~200 B each), not with history or body size.",
+      "id": 34,
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_process_resident_memory_bytes{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "resident {{instance}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_go_heap_inuse_bytes{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Go heap {{instance}}",
+          "refId": "B",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Goroutines",
+      "description": "Roughly one per open connection or long poll.",
+      "id": 35,
+      "gridPos": {
+        "x": 12,
+        "y": 80,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "qsrv_go_goroutines{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}
