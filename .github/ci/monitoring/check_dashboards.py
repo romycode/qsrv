@@ -94,6 +94,11 @@ if failures:
     lines += ["", "Failed:"] + [f"- {f}" for f in failures]
 report = "\n".join(lines)
 print(report)
+# Annotations: visible on the PR and through the API, unlike the log.
+for f in failures:
+    print("::error title=Dashboard query failed::" + f.replace("\n", " ").replace("%", "%25"))
+for e in empty[:20]:
+    print("::warning title=Panel without data::" + e)
 if os.environ.get("GITHUB_STEP_SUMMARY"):
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
         f.write(report + "\n")
