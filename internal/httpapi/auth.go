@@ -105,7 +105,12 @@ func (a *Authenticator) Replace(entries []KeyEntry) error {
 
 // Lookup returns the identity of key.
 func (a *Authenticator) Lookup(key string) (Identity, bool) {
-	d := sha256.Sum256([]byte(key))
+	return a.lookupDigest(sha256.Sum256([]byte(key)))
+}
+
+// lookupDigest finds the key whose SHA-256 is d (admin sessions keep only
+// the digest), in constant time over all keys.
+func (a *Authenticator) lookupDigest(d [32]byte) (Identity, bool) {
 	var id Identity
 	found := 0
 	for _, e := range *a.keys.Load() {

@@ -1,0 +1,19 @@
+{{define "body"}}
+<main class="login">
+  <div class="login-box">
+    <p class="brand brand-large">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="4" height="14" rx="1"/><rect x="8" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1" class="brand-mark-dim"/><path d="M20 12h2"/></svg>
+      <span>qsrv</span>
+    </p>
+    <h1>Sign in to see your queues</h1>
+    <p class="muted">Use an API key. An admin key shows every tenant; a tenant's key shows only that tenant.</p>
+    <form method="post" action="/admin/login" class="login-form">
+      <label for="key">API key</label>
+      <input id="key" name="key" type="password" autocomplete="current-password" spellcheck="false" required autofocus>
+      {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+      <button type="submit" class="button">Sign in</button>
+    </form>
+    <p class="fine">Read-only: nothing here changes queues or messages.</p>
+  </div>
+</main>
+{{end}}

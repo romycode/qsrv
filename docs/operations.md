@@ -45,6 +45,7 @@ export QSRV_API_KEYS="acme:billing:$(openssl rand -hex 32)"   # tenant:name:key,
 | `-backup-dir` / `QSRV_BACKUP_DIR` | — | snapshots of every tenant here; see [Backups](#backups) |
 | `-backup-every` / `QSRV_BACKUP_EVERY` | 1h | snapshot interval |
 | `-backup-keep` | 24 | snapshots kept |
+| `-admin` / `QSRV_ADMIN` | `true` | read-only admin UI at `/admin/` on the API address; `false` turns it off. See [Admin UI](#admin-ui) |
 | `-min-free-disk` / `QSRV_MIN_FREE_DISK` | 1GiB | below this free space, refuse new data with `503 storage_full`. See [Disk full](#disk-full); `0` disables |
 | `-metrics-addr` / `QSRV_METRICS_ADDR` | `127.0.0.1:9464` | Prometheus `/metrics`, no auth; empty disables |
 | `-log-level` / `QSRV_LOG_LEVEL` | info | JSON logs to stderr |
@@ -106,6 +107,41 @@ reload, move the clients, remove the old entry, reload.
 
 **Access logs** carry `tenant` and `key` (the name). Metrics label queues
 with their full name (`queue="acme/orders"`).
+
+## Admin UI
+
+`http://<qsrv>/admin/`: a read-only web panel, served by qsrv itself on the
+API address (no extra service, nothing to install).
+
+![Queues of every tenant](images/admin-dashboard.png)
+
+- **Queues**: per queue, what is ready, delayed, in flight and waiting
+  behind its ordering group, with the age of the oldest message (amber after
+  5 minutes, red after an hour). Dead letter queues holding messages are
+  marked. Topics and their subscribers. Refreshes every 3 seconds.
+- **A queue**: its counts and settings (lease, retries, DLQ, ordering,
+  capacity, retention), the messages in it and the processed ones (acked,
+  dropped, dead-lettered, while retention keeps them), filterable by state.
+  Click a message to see its body (JSON is indented) and metadata.
+- It never changes anything: no sends, acks, deletes or replays. Looking at
+  a message doesn't receive it.
+
+![A message of a queue](images/admin-message.png)
+
+**Sign in with an API key.** An admin key (`*`) sees every tenant; a tenant
+key, only its tenant. The key is exchanged for a session cookie
+(`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS or behind a proxy that
+sets `X-Forwarded-Proto: https`) that lasts 12 hours. The server keeps only
+the key's hash and checks it on every request: remove a key and reload
+(SIGHUP) and its sessions end at once. Sessions live in memory, so a restart
+signs everyone out. With `-insecure-no-auth` there is no sign-in and anyone
+reaching the port sees everything.
+
+The panel is on the same port as the API, so whoever can reach the API can
+reach the sign-in page. To keep it off a public address, run qsrv with
+`-admin=false` there, or let your proxy route `/admin/` only from your
+network. It sends a strict Content-Security-Policy and refuses to be framed;
+Alpine.js (embedded, no CDN) needs `'unsafe-eval'` in it.
 
 ## Disk full
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,6 +85,53 @@ func (c *Client) GetQueue(ctx context.Context, name string) (api.Queue, error) {
 
 func (c *Client) DeleteQueue(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/queues/"+url.PathEscape(name), nil, nil)
+}
+
+// PeekOptions selects messages to look at without receiving them.
+type PeekOptions struct {
+	History bool     // processed messages (newest first) instead of live ones (oldest first)
+	States  []string // live: ready, delayed, in_flight; history: acked, dropped, dead_lettered
+	Cursor  uint64   // NextCursor of the previous page
+	Limit   int      // default 50, max 500
+}
+
+// PeekMessages lists messages of a queue without receiving them: no lease,
+// no attempt, no effect on delivery.
+func (c *Client) PeekMessages(ctx context.Context, queue string, o PeekOptions) (api.MessagePage, error) {
+	q := url.Values{}
+	if o.History {
+		q.Set("view", "history")
+	}
+	if len(o.States) > 0 {
+		q.Set("state", strings.Join(o.States, ","))
+	}
+	if o.Cursor > 0 {
+		q.Set("cursor", strconv.FormatUint(o.Cursor, 10))
+	}
+	if o.Limit > 0 {
+		q.Set("limit", strconv.Itoa(o.Limit))
+	}
+	p := qpath(queue, "/messages")
+	if len(q) > 0 {
+		p += "?" + q.Encode()
+	}
+	var out api.MessagePage
+	err := c.do(ctx, http.MethodGet, p, nil, &out)
+	return out, err
+}
+
+// PeekMessage returns one message, live or processed, with its body.
+func (c *Client) PeekMessage(ctx context.Context, queue, id string) (api.MessageInfo, error) {
+	var out api.MessageInfo
+	err := c.do(ctx, http.MethodGet, qpath(queue, "/messages/"+url.PathEscape(id)), nil, &out)
+	return out, err
+}
+
+// Overview returns every queue (live counts) and topic visible to the key.
+func (c *Client) Overview(ctx context.Context) (api.Overview, error) {
+	var out api.Overview
+	err := c.do(ctx, http.MethodGet, "/v1/overview", nil, &out)
+	return out, err
 }
 
 // Send enqueues body. groupID is optional ("" = no ordering group).

@@ -133,6 +133,44 @@ qs $Q/v1/queues/orders/replay -d '{"to": "orders-replay", "from": "2026-10-01T00
 `states`: any of `acked`, `dropped`, `dead_lettered` (default all). `limit`
 default 1000, max 10000. Each page is atomic.
 
+## Inspect (peek)
+
+Read-only: these look at messages without receiving them (no lease, no
+attempt, no effect on order). The admin UI uses them.
+
+### List: `GET /v1/queues/{name}/messages` → `200`
+
+| query | default | |
+|---|---|---|
+| `view` | `live` | `live`: messages in the queue, oldest first. `history`: processed messages, newest first |
+| `state` | all of the view | comma-separated. Live: `ready`, `waiting` (behind the head of its ordering group), `delayed`, `in_flight`. History: `acked`, `dropped`, `dead_lettered` |
+| `cursor` | — | `next_cursor` of the previous page |
+| `limit` | 50 | max 500 |
+
+```json
+{"messages": [{"id": "9f2c…", "seq": 41, "state": "in_flight", "attempts": 1, "size": 94,
+  "group_id": "customer-3", "enqueued_at": "…", "lease_expires_at": "…"}],
+ "next_cursor": 41}
+```
+
+`available_at` is set for delayed messages, `lease_expires_at` for in-flight
+ones, `done_at` and (when dead-lettered) `moved_to` for processed ones. A page
+can hold fewer than `limit` messages and still have a `next_cursor` when a
+`state` filter is set; keep going until `next_cursor` is absent.
+
+### One message: `GET /v1/queues/{name}/messages/{id}` → `200`
+
+The same fields plus `body` (or `body_base64` when it isn't UTF-8). Works
+for live and processed messages; `404 not_found` once retention removed it.
+
+### Overview: `GET /v1/overview` → `200`
+
+Every queue and topic the key can see, in one call, from memory (cheap
+enough to poll every few seconds): per queue the live counts, the
+enqueue time of the oldest message, its DLQ, the queues it is the DLQ of
+(`is_dead_letter_queue_of`) and the topics it is subscribed to. No history
+count: that one reads the database, use `GET /v1/queues/{name}`.
+
 ## Errors
 
 ```json

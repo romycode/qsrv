@@ -20,6 +20,9 @@ const (
 type Options struct {
 	Auth            *Authenticator // nil = no auth (only for local dev)
 	MaxMessageBytes int64          // default 256KiB
+	// Admin serves the read-only admin UI under /admin/ (see admin.go).
+	Admin   bool
+	Version string // shown in the admin UI, and busts its asset cache
 }
 
 type Server struct {
@@ -41,6 +44,9 @@ func New(b *queue.Broker, o Options) http.Handler {
 	mux.HandleFunc("GET /v1/queues/{name}", s.get)
 	mux.HandleFunc("DELETE /v1/queues/{name}", s.delete)
 	mux.HandleFunc("POST /v1/queues/{name}/messages", s.send)
+	mux.HandleFunc("GET /v1/queues/{name}/messages", s.peek)
+	mux.HandleFunc("GET /v1/queues/{name}/messages/{id}", s.peekOne)
+	mux.HandleFunc("GET /v1/overview", s.overview)
 	mux.HandleFunc("POST /v1/queues/{name}/receive", s.receive)
 	mux.HandleFunc("POST /v1/queues/{name}/leases/{lease}/ack", s.ack)
 	mux.HandleFunc("POST /v1/queues/{name}/leases/{lease}/nack", s.nack)
@@ -64,6 +70,11 @@ func New(b *queue.Broker, o Options) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
 	})
+	if o.Admin {
+		ah := s.adminHandler(o.Auth, o.Version)
+		root.Handle("/admin", ah)
+		root.Handle("/admin/", ah)
+	}
 	root.Handle("/", h)
 	return accessLog(root)
 }
@@ -491,7 +502,7 @@ func (s *Server) decode(w http.ResponseWriter, r *http.Request, v any, limit int
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, queue.ErrQueueNotFound), errors.Is(err, queue.ErrTopicNotFound):
+	case errors.Is(err, queue.ErrQueueNotFound), errors.Is(err, queue.ErrTopicNotFound), errors.Is(err, queue.ErrMessageNotFound):
 		writeAPIErr(w, http.StatusNotFound, api.CodeNotFound, err.Error())
 	case errors.Is(err, queue.ErrLeaseNotFound):
 		writeAPIErr(w, http.StatusGone, api.CodeLeaseGone, err.Error())

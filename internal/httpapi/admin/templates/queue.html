@@ -1,0 +1,116 @@
+{{define "body"}}
+{{template "header" .}}
+<main class="page" x-data="queuePage" data-queue="{{.Queue}}" @keydown.escape.window="close()">
+  <nav class="crumbs"><a href="/admin/">Queues</a></nav>
+  <p class="banner banner-error" role="alert" x-cloak x-show="error" x-text="error"></p>
+
+  <div class="page-head">
+    <h1 class="queue-title" x-text="name">{{.Queue}}</h1>
+    <p class="lede" x-cloak x-show="summary" x-text="lede()"></p>
+  </div>
+
+  <dl class="counts" x-cloak x-show="info">
+    <div><dt>Ready</dt><dd class="c-ready" x-text="fmtNum(info?.stats.ready)"></dd></div>
+    <div><dt>Delayed</dt><dd class="c-delayed" x-text="fmtNum(info?.stats.delayed)"></dd></div>
+    <div><dt>In flight</dt><dd class="c-inflight" x-text="fmtNum(info?.stats.in_flight)"></dd></div>
+    <div><dt>Waiting in group</dt><dd x-text="fmtNum(waitingInfo())"></dd></div>
+    <div><dt>Oldest</dt><dd :class="summary && ageClass(summary)" x-text="summary?.oldest_enqueued_at ? age(summary.oldest_enqueued_at) : '–'"></dd></div>
+    <div><dt>History kept</dt><dd x-text="fmtNum(info?.stats.history)"></dd></div>
+  </dl>
+
+  <details class="config" x-cloak x-show="info">
+    <summary>Settings</summary>
+    <dl class="config-list">
+      <div><dt>Lease (visibility timeout)</dt><dd x-text="fmtDur(info?.visibility_timeout)"></dd></div>
+      <div><dt>Attempts before giving up</dt><dd x-text="attemptsText()"></dd></div>
+      <div><dt>Retry backoff</dt><dd x-text="backoffText()"></dd></div>
+      <div><dt>Dead letter queue</dt><dd>
+        <a x-show="info?.dead_letter_queue" :href="queueURL(info?.dead_letter_queue || '')" x-text="info?.dead_letter_queue"></a>
+        <span x-show="!info?.dead_letter_queue">None: failed messages are dropped</span>
+      </dd></div>
+      <div x-show="summary?.is_dead_letter_queue_of"><dt>Dead letter queue of</dt><dd>
+        <template x-for="n in (summary?.is_dead_letter_queue_of || [])" :key="n"><a class="chip" :href="queueURL(n)" x-text="n"></a></template>
+      </dd></div>
+      <div x-show="summary?.topics"><dt>Subscribed to topics</dt><dd x-text="(summary?.topics || []).join(', ')"></dd></div>
+      <div><dt>Ordering</dt><dd x-text="info?.ordering === 'strict' ? 'Strict: one message in flight at a time' : 'By group: strict within each group'"></dd></div>
+      <div><dt>Capacity</dt><dd x-text="info?.max_messages ? fmtNum(info.max_messages) + ' messages' : 'Unlimited'"></dd></div>
+      <div><dt>History retention</dt><dd x-text="info?.retention === '0s' ? 'Forever' : fmtDur(info?.retention)"></dd></div>
+    </dl>
+  </details>
+
+  <div class="tabs" role="tablist" aria-label="Messages">
+    <button type="button" role="tab" :aria-selected="view === 'live'" @click="setView('live')">In the queue</button>
+    <button type="button" role="tab" :aria-selected="view === 'history'" @click="setView('history')">Processed</button>
+  </div>
+
+  <div class="toolbar">
+    <div class="filters" role="group" aria-label="Filter by state">
+      <template x-for="s in viewStates()" :key="s">
+        <button type="button" class="chip-toggle" :class="'st-' + s" :aria-pressed="states.includes(s)" @click="toggleState(s)" x-text="stateLabel(s)"></button>
+      </template>
+    </div>
+    <button type="button" class="link-button" @click="reload()">Refresh</button>
+  </div>
+
+  <table class="messages" x-show="messages.length > 0">
+    <thead>
+      <tr>
+        <th scope="col">Message</th>
+        <th scope="col">State</th>
+        <th scope="col" class="num">Attempts</th>
+        <th scope="col">Group</th>
+        <th scope="col" x-text="view === 'live' ? 'Enqueued' : 'Finished'"></th>
+        <th scope="col" class="num">Size</th>
+      </tr>
+    </thead>
+    <tbody>
+      <template x-for="m in messages" :key="m.id">
+        <tr class="clickable" :class="{ selected: selected && selected.id === m.id }" @click="open(m)" @keydown.enter="open(m)" tabindex="0">
+          <td class="mono id" x-text="m.id"></td>
+          <td><span class="state" :class="'st-' + m.state" x-text="stateText(m)"></span></td>
+          <td class="num" x-text="m.attempts"></td>
+          <td class="mono" x-text="m.group_id || ''"></td>
+          <td :title="fmtTime(view === 'live' ? m.enqueued_at : m.done_at)" x-text="age(view === 'live' ? m.enqueued_at : m.done_at)"></td>
+          <td class="num" x-text="fmtBytes(m.size)"></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+
+  <div class="empty" x-cloak x-show="loaded && messages.length === 0">
+    <p x-text="emptyText()"></p>
+  </div>
+  <button type="button" class="button button-quiet more" x-cloak x-show="next" @click="loadMore()" :disabled="loading">Show more</button>
+
+  <aside class="drawer" x-cloak x-show="selected" x-transition.opacity role="dialog" aria-modal="false" aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <h2 id="drawer-title">Message</h2>
+      <button type="button" class="icon-button" @click="close()" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <template x-if="selected">
+      <div class="drawer-body">
+        <p class="mono id-full" x-text="selected.id"></p>
+        <dl class="meta">
+          <div><dt>State</dt><dd><span class="state" :class="'st-' + selected.state" x-text="stateText(selected)"></span></dd></div>
+          <div><dt>Attempts</dt><dd x-text="selected.attempts"></dd></div>
+          <div x-show="selected.group_id"><dt>Group</dt><dd class="mono" x-text="selected.group_id"></dd></div>
+          <div><dt>Enqueued</dt><dd x-text="fmtTime(selected.enqueued_at)"></dd></div>
+          <div x-show="selected.available_at"><dt>Deliverable at</dt><dd x-text="fmtTime(selected.available_at)"></dd></div>
+          <div x-show="selected.lease_expires_at"><dt>Lease expires</dt><dd x-text="fmtTime(selected.lease_expires_at)"></dd></div>
+          <div x-show="selected.done_at"><dt>Finished</dt><dd x-text="fmtTime(selected.done_at)"></dd></div>
+          <div x-show="selected.moved_to"><dt>Moved to</dt><dd><a :href="queueURL(selected.moved_to || '')" x-text="selected.moved_to"></a></dd></div>
+          <div x-show="selected.replay_of"><dt>Replay of</dt><dd class="mono" x-text="selected.replay_of"></dd></div>
+          <div><dt>Size</dt><dd x-text="fmtBytes(selected.size)"></dd></div>
+        </dl>
+        <div class="body-head">
+          <h3 x-text="bodyKind()"></h3>
+          <button type="button" class="link-button" @click="copyBody()" x-text="copied ? 'Copied' : 'Copy'"></button>
+        </div>
+        <pre class="body" x-text="bodyText()"></pre>
+      </div>
+    </template>
+  </aside>
+</main>
+{{end}}

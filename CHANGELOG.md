@@ -8,6 +8,17 @@ API or the data format (always called out here).
 
 ## [Unreleased]
 
+### Added
+- Admin UI at `/admin/` (on by default; `-admin=false` turns it off): queues
+  and topics of every tenant or of one, with live counts, oldest message age
+  and dead letters; per queue its settings and its messages, live and
+  processed, with their bodies. Read-only. Sign in with an API key.
+- Peek API: `GET /v1/queues/{name}/messages` (live or processed, filterable
+  by state, paginated) and `GET /v1/queues/{name}/messages/{id}` (with body)
+  look at messages without receiving them; `GET /v1/overview` returns every
+  queue and topic of the key in one call. Go client: `PeekMessages`,
+  `PeekMessage`, `Overview`.
+
 ## [0.1.0] - 2026-11-01
 
 First release. A durable message queue server: one binary, SQLite storage,

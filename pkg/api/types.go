@@ -61,6 +61,58 @@ type QueueList struct {
 	Queues []string `json:"queues"`
 }
 
+// MessageInfo is a message as stored, seen without receiving it (peek).
+type MessageInfo struct {
+	ID       string `json:"id"`
+	GroupID  string `json:"group_id,omitempty"`
+	Seq      uint64 `json:"seq"`
+	State    string `json:"state"` // ready, delayed, in_flight | acked, dropped, dead_lettered
+	Attempts int    `json:"attempts"`
+	// Body size in bytes.
+	Size           int        `json:"size"`
+	EnqueuedAt     time.Time  `json:"enqueued_at"`
+	AvailableAt    *time.Time `json:"available_at,omitempty"`     // delayed
+	LeaseExpiresAt *time.Time `json:"lease_expires_at,omitempty"` // in_flight
+	DoneAt         *time.Time `json:"done_at,omitempty"`          // processed
+	MovedTo        string     `json:"moved_to,omitempty"`         // dead_lettered: the DLQ
+	ReplayOf       string     `json:"replay_of,omitempty"`
+	// Set only when peeking one message.
+	Body       *string `json:"body,omitempty"`
+	BodyBase64 []byte  `json:"body_base64,omitempty"`
+}
+
+// MessagePage is a page of peeked messages; pass NextCursor as cursor for
+// the next page (absent when there are no more).
+type MessagePage struct {
+	Messages   []MessageInfo `json:"messages"`
+	NextCursor uint64        `json:"next_cursor,omitempty"`
+}
+
+// QueueSummary is a queue in the overview: counts kept in memory, no
+// database reads (no history count).
+type QueueSummary struct {
+	Name             string     `json:"name"`
+	Messages         int        `json:"messages"`
+	Ready            int        `json:"ready"`
+	Delayed          int        `json:"delayed"`
+	InFlight         int        `json:"in_flight"`
+	Groups           int        `json:"groups"`
+	OldestEnqueuedAt *time.Time `json:"oldest_enqueued_at,omitempty"`
+	MaxMessages      int        `json:"max_messages,omitempty"`
+	DeadLetterQueue  string     `json:"dead_letter_queue,omitempty"`
+	// IsDeadLetterQueueOf lists the queues that send their failures here.
+	IsDeadLetterQueueOf []string `json:"is_dead_letter_queue_of,omitempty"`
+	Topics              []string `json:"topics,omitempty"` // topics it is subscribed to
+}
+
+// Overview is every queue and topic visible to the key, in one call.
+type Overview struct {
+	Tenant string         `json:"tenant,omitempty"` // empty for admin keys
+	Now    time.Time      `json:"now"`
+	Queues []QueueSummary `json:"queues"`
+	Topics []Topic        `json:"topics"`
+}
+
 // SendRequest carries the body either as UTF-8 text (Body) or raw bytes
 // (BodyBase64). Exactly one must be set.
 type SendRequest struct {
