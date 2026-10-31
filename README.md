@@ -35,6 +35,9 @@ qctl recv -wait 20s orders                               # prints the message an
 qctl ack orders <lease>
 ```
 
+Or download `qsrv` and `qctl` for Linux or macOS from the
+[releases](https://github.com/romycode/qsrv/releases).
+
 With Docker:
 
 ```sh
@@ -130,6 +133,7 @@ running jobs finish. `qctl <command> -h` lists each command's flags.
 |---|---|
 | [Concepts](docs/concepts.md) | leases, retries and DLQs, ordering groups, delays, topics, replay, guarantees |
 | [HTTP API](docs/api.md) | every endpoint, request and response, error codes |
+| [Production](docs/production.md) | checklist before going live: promises, storage, backups, security, monitoring, sizing |
 | [Operations](docs/operations.md) | configuration, API keys and tenants, Docker, backups, metrics and alerts, sizing |
 | [PHP](php/README.md) | client, Messenger transport, retries with Messenger vs qsrv |
 | [Development](docs/development.md) | tests, benchmarks, CI, commits, releases, internals |

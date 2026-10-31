@@ -1,0 +1,79 @@
+name: Release
+
+# On a server tag (vX.Y.Z; PHP tags are php/vX.Y.Z and don't match):
+# pure-Go binaries of qsrv and qctl (Linux, macOS; qctl also Windows), checksums, and a
+# GitHub release whose notes are the tag's section of CHANGELOG.md. The
+# Docker image for the same tag is built by docker.yml.
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          # Lines between "## [version]" and the next "## [" heading.
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for [$version]: add it before tagging"
+            exit 1
+          fi
+
+      - name: Build binaries (pure Go, static)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          mkdir dist
+          # The server runs on Linux and macOS (it flocks its data dir); qctl
+          # also on Windows.
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os=${target%/*} arch=${target#*/}
+            cmds="./cmd/qsrv ./cmd/qctl" name="qsrv_${version}_${os}_${arch}"
+            if [ "$os" = windows ]; then cmds="./cmd/qctl" name="qctl_${version}_${os}_${arch}"; fi
+            mkdir "dist/$name"
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w -X main.version=$version" \
+              -o "dist/$name/" $cmds
+            cp README.md CHANGELOG.md "dist/$name/"
+            [ -f LICENSE ] && cp LICENSE "dist/$name/"
+            if [ "$os" = windows ]; then
+              (cd dist && zip -qr "$name.zip" "$name")
+            else
+              tar -C dist -czf "dist/$name.tar.gz" "$name"
+            fi
+            rm -rf "dist/$name"
+            echo "built $name"
+          done
+          (cd dist && sha256sum * > checksums.txt && cat checksums.txt)
+
+      - name: Smoke test the linux/amd64 binary
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          tar -xzf "dist/qsrv_${version}_linux_amd64.tar.gz" -C /tmp
+          /tmp/qsrv_${version}_linux_amd64/qsrv -version | tee /dev/stderr | grep -q "^$version "
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "qsrv ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            --verify-tag

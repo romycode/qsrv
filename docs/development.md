@@ -116,7 +116,20 @@ git config core.hooksPath .githooks   # rejects non-conforming messages on commi
 
 ## Releases
 
-The server and the PHP package are versioned independently:
+The server and the PHP package are versioned independently.
+
+**Server release**: move the `[Unreleased]` entries of `CHANGELOG.md` to a
+`[X.Y.Z] - date` section (in a PR), then tag `main`:
+
+```sh
+git tag -a v0.1.0 -m "qsrv 0.1.0" && git push origin v0.1.0
+```
+
+The tag runs `release.yml` (binaries for Linux and macOS, `qctl` for
+Windows, checksums, a GitHub release with that CHANGELOG section as notes;
+it fails if the section is missing) and `docker.yml` (the image, tagged
+`0.1.0`, `0.1` and `latest`).
+
 
 | tag in this repo | releases |
 |---|---|

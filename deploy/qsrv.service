@@ -1,0 +1,39 @@
+# qsrv as a systemd service. Install:
+#   sudo install -m 0755 qsrv qctl /usr/local/bin/
+#   sudo useradd --system --home /var/lib/qsrv --shell /usr/sbin/nologin qsrv
+#   sudo install -d -o qsrv -g qsrv /var/lib/qsrv /mnt/backup/qsrv
+#   sudo install -m 0640 -o root -g qsrv keys /etc/qsrv/keys   # tenant:name:key per line
+#   sudo cp qsrv.service /etc/systemd/system/ && sudo systemctl enable --now qsrv
+# Reload keys: sudo systemctl reload qsrv
+[Unit]
+Description=qsrv durable message queue
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+User=qsrv
+Group=qsrv
+ExecStart=/usr/local/bin/qsrv \
+  -addr :8080 \
+  -data-dir /var/lib/qsrv \
+  -api-keys-file /etc/qsrv/keys \
+  -backup-dir /mnt/backup/qsrv \
+  -metrics-addr 127.0.0.1:9464
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2
+# SIGTERM commits pending writes; give it time.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+# Hardening: only the data and backup dirs are writable.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/qsrv /mnt/backup/qsrv
+ReadOnlyPaths=/etc/qsrv
+
+[Install]
+WantedBy=multi-user.target
