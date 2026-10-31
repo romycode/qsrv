@@ -27,9 +27,23 @@ def call(method, path, body=None):
                                  headers={"Authorization": AUTH, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.load(r)
+            status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        status, raw = e.code, e.read()
+    try:
+        return status, json.loads(raw or b"{}")
+    except ValueError:
+        return status, {"message": raw[:300].decode(errors="replace")}
+
+
+def crash(kind, value, tb):
+    import traceback
+    msg = "".join(traceback.format_exception(kind, value, tb)).replace("\n", " | ")
+    print("::error title=check_dashboards crashed::" + msg)
+    sys.exit(1)
+
+
+sys.excepthook = crash
 
 
 def substitute(expr, uid):
@@ -40,8 +54,12 @@ def substitute(expr, uid):
 
 
 failures, empty, ok = [], [], 0
-_, found = call("GET", "/api/search?tag=qsrv")
+status, found = call("GET", "/api/search?tag=qsrv")
+if status != 200 or not isinstance(found, list):
+    print(f"::error title=Grafana search failed::{status} {found}")
+    sys.exit(1)
 provisioned = {d["uid"] for d in found}
+print("provisioned:", sorted(provisioned))
 
 for path in paths:
     local = json.load(open(path))
