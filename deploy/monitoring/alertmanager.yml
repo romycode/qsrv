@@ -1,0 +1,39 @@
+# Alertmanager for the deploy/monitoring stack. As shipped it only shows
+# alerts in its UI (http://localhost:9093); uncomment a receiver to get them.
+route:
+  receiver: default
+  group_by: [alertname, queue]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: default
+      repeat_interval: 1h
+
+receivers:
+  - name: default
+    # slack_configs:
+    #   - api_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+    #     channel: "#qsrv-alerts"
+    #     send_resolved: true
+    #     title: '{{ .CommonAnnotations.summary }}'
+    # email_configs:
+    #   - to: oncall@example.com
+    #     from: alertmanager@example.com
+    #     smarthost: smtp.example.com:587
+    #     auth_username: alertmanager@example.com
+    #     auth_password_file: /etc/alertmanager/smtp_password
+
+inhibit_rules:
+  # qsrv down: its other alerts are noise.
+  - source_matchers: [alertname="QsrvDown"]
+    target_matchers: [alertname=~"Qsrv.+", alertname!="QsrvDown"]
+    equal: [instance]
+  # A critical alert silences its own warning.
+  - source_matchers: [alertname="QsrvMessagesTooOldCritical"]
+    target_matchers: [alertname="QsrvMessagesTooOld"]
+    equal: [queue]
+  - source_matchers: [alertname="QsrvDiskSpaceCritical"]
+    target_matchers: [alertname=~"QsrvDiskSpaceLow|QsrvDiskWillFill"]
+    equal: [instance]

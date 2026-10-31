@@ -144,7 +144,7 @@ waiting and for how long, dead letters, and each message's body. Read-only.
 | [Concepts](docs/concepts.md) | leases, retries and DLQs, ordering groups, delays, topics, replay, guarantees |
 | [HTTP API](docs/api.md) | every endpoint, request and response, error codes |
 | [Production](docs/production.md) | checklist before going live: promises, storage, backups, security, monitoring, sizing |
-| [Operations](docs/operations.md) | configuration, API keys and tenants, Docker, backups, metrics and alerts, sizing |
+| [Operations](docs/operations.md) | configuration, API keys and tenants, Docker, backups, metrics, alerts and Grafana dashboards, sizing |
 | [PHP](php/README.md) | client, Messenger transport, retries with Messenger vs qsrv |
 | [Development](docs/development.md) | tests, benchmarks, CI, commits, releases, internals |
 | [CI](docs/ci.md) | what each GitHub Action does, releases, troubleshooting |

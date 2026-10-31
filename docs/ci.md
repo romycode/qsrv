@@ -13,6 +13,7 @@ to do when it fails. Files are in `.github/workflows/`.
 | [Commits](#commits-commitsyml) | every PR | commit messages and the PR title follow Conventional Commits |
 | [Release](#release-releaseyml) | `vX.Y.Z` tags | binaries and the GitHub release |
 | [Tag release](#tag-release-tagyml) | by hand, from the Actions tab | creates a release (server or PHP) with one click |
+| [Monitoring](#monitoring-monitoringyml) | PRs and `main`, when the alert rules, dashboards or metrics change | the alerts and Grafana dashboards work against a real qsrv |
 
 The first four guard changes; the last two publish them.
 
@@ -67,6 +68,24 @@ of PHP 8.4 and 8.5 × Symfony 7.4 and 8.1 (four jobs).
   the last lines of its output.
 
 Locally: see [php/README.md](../php/README.md#tests).
+
+## Monitoring (`monitoring.yml`)
+
+Checks the alerts and the Grafana dashboards against a live stack, because
+a dashboard that loads can still query a metric or label that doesn't exist.
+
+1. `promtool check rules` and `check config`, `amtool check-config`.
+2. Starts `deploy/monitoring` with qsrv built from the PR, and generates
+   load that produces every kind of event: sends, acks, ordering groups,
+   delays, nacks, dead letters, lease expiries and a full queue.
+3. Runs every query of every panel and variable through Grafana's API.
+   **Fails** if Grafana or Prometheus rejects one; lists the panels without
+   data (expected for what the load doesn't produce, such as HTTP 500s).
+4. Takes screenshots of the three dashboards, light and dark, and uploads
+   them as the `grafana-dashboards` artifact of the run.
+
+Runs when `deploy/prometheus/`, `deploy/grafana/`, `deploy/monitoring/` or
+the metrics code (`internal/obs/`) change.
 
 ## Docker (`docker.yml`)
 

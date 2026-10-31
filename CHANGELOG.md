@@ -18,6 +18,11 @@ API or the data format (always called out here).
   look at messages without receiving them; `GET /v1/overview` returns every
   queue and topic of the key in one call. Go client: `PeekMessages`,
   `PeekMessage`, `Overview`.
+- Grafana dashboards (overview, one queue, alerts) in `deploy/grafana`,
+  with provisioning, and `deploy/monitoring`: qsrv, Prometheus,
+  Alertmanager and Grafana in one compose file.
+- `qsrv_queue_messages{state="waiting"}`: messages behind the head of their
+  ordering group. The four states now add up to the queue's messages.
 
 ## [0.1.0] - 2026-11-01
 

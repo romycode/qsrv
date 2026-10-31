@@ -77,6 +77,7 @@ func TestMetricsEndToEnd(t *testing.T) {
 		`qsrv_messages_total{queue="t/jobs",event="dead_lettered"} 1`,
 		`qsrv_messages_total{queue="t/dlq",event="dead_letter_in"} 1`,
 		`qsrv_queue_messages{queue="t/jobs",state="ready"} 1`,
+		`qsrv_queue_messages{queue="t/jobs",state="waiting"} 0`,
 		`qsrv_queue_messages{queue="t/dlq",state="ready"} 1`,
 		`qsrv_queue_max_messages{queue="t/jobs"} 100`,
 		`qsrv_queue_oldest_message_age_seconds{queue="t/jobs"} 36`,
