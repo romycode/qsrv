@@ -107,8 +107,9 @@ jobs:
           curl -sf 'localhost:9090/api/v1/alerts' | grep -q '"alertname":"QsrvDeadLetters".*"state":"firing"' \
             || { echo "::error::QsrvDeadLetters did not fire"; curl -s localhost:9090/api/v1/alerts; exit 1; }
           echo "rules loaded: $(curl -sf localhost:9090/api/v1/rules | grep -o '"name":"Qsrv[A-Za-z]*"' | sort -u | wc -l) alerts"
-          # One more scrape for the panels (and the snapshot metrics, every 10s).
-          sleep 20
+          # Panels with 1m windows (failures, errors, alert history) are aligned
+          # to the minute: wait for a full window after the events.
+          sleep 75
 
       - name: Every panel query through Grafana
         run: python3 .github/ci/monitoring/check_dashboards.py http://localhost:3000 deploy/grafana/dashboards/*.json
