@@ -1,0 +1,106 @@
+name: Tag release
+
+# Run by hand (Actions → Tag release → Run workflow), always from main.
+#
+#   server  tags vX.Y.Z on main, then starts release.yml (binaries, GitHub
+#           release) and docker.yml (image) on that tag. A tag pushed with
+#           GITHUB_TOKEN doesn't trigger workflows by itself; workflow_dispatch
+#           does, so this job dispatches them.
+#   php     runs scripts/release-php.sh: tags php/vX.Y.Z here and vX.Y.Z on
+#           the romycode/qsrv-php mirror (Packagist). Needs the secret
+#           QSRV_PHP_MIRROR_KEY: an SSH deploy key with write access to the
+#           mirror (see docs/development.md#releases).
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: What to release
+        type: choice
+        options: [server, php]
+        default: server
+      version:
+        description: Version, e.g. v0.1.0
+        type: string
+        required: true
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  server:
+    if: inputs.component == 'server'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag
+      actions: write  # dispatch release.yml and docker.yml
+    steps:
+      - name: Checks
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it from main (got $GITHUB_REF)"; exit 1; }
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::version must look like v1.2.3"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag main
+        env:
+          VERSION: ${{ inputs.version }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::$VERSION already exists"; exit 1
+          fi
+          grep -q "^## \[${VERSION#v}\]" CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no '## [${VERSION#v}]' section: add it in a PR first"; exit 1; }
+          git config user.name "$ACTOR"
+          git config user.email "$ACTOR@users.noreply.github.com"
+          git tag -a "$VERSION" -m "qsrv ${VERSION#v}" HEAD
+          git push origin "refs/tags/$VERSION"
+          echo "tagged $(git rev-parse --short HEAD) as $VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Start the release and image builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh workflow run release.yml --ref "$VERSION"
+          gh workflow run docker.yml --ref "$VERSION"
+          echo "started release.yml and docker.yml on $VERSION: see the Actions tab" >> "$GITHUB_STEP_SUMMARY"
+
+  php:
+    if: inputs.component == 'php'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push php/vX.Y.Z here
+    steps:
+      - name: Checks
+        env:
+          VERSION: ${{ inputs.version }}
+          HAS_KEY: ${{ secrets.QSRV_PHP_MIRROR_KEY != '' }}
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it from main (got $GITHUB_REF)"; exit 1; }
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::version must look like v1.2.3"; exit 1; }
+          [ "$HAS_KEY" = true ] || { echo "::error::secret QSRV_PHP_MIRROR_KEY is not set (see docs/development.md#releases)"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: SSH key for the mirror
+        env:
+          KEY: ${{ secrets.QSRV_PHP_MIRROR_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/mirror && chmod 600 ~/.ssh/mirror
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Publish
+        env:
+          VERSION: ${{ inputs.version }}
+          ACTOR: ${{ github.actor }}
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror -o IdentitiesOnly=yes
+        run: |
+          git config user.name "$ACTOR"
+          git config user.email "$ACTOR@users.noreply.github.com"
+          scripts/release-php.sh "$VERSION"
+          echo "published romycode/qsrv-php $VERSION" >> "$GITHUB_STEP_SUMMARY"

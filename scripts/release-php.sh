@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Publishes the PHP package (php/) to the read-only mirror romycode/qsrv-php,
-# which Packagist reads. Uses your own git credentials: no CI secrets.
+# which Packagist reads. Uses your git credentials, or the Tag release
+# action (.github/workflows/tag.yml) with the QSRV_PHP_MIRROR_KEY secret.
 #
 #   scripts/release-php.sh v0.2.0        # tag php/v0.2.0 here, v0.2.0 on the mirror
 #   scripts/release-php.sh --sync        # only update the mirror's main (no release)
