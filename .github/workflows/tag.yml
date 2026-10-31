@@ -9,7 +9,7 @@ name: Tag release
 #   php     runs scripts/release-php.sh: tags php/vX.Y.Z here and vX.Y.Z on
 #           the romycode/qsrv-php mirror (Packagist). Needs the secret
 #           QSRV_PHP_MIRROR_KEY: an SSH deploy key with write access to the
-#           mirror (see docs/development.md#releases).
+#           mirror, created by scripts/setup-release.sh.
 
 on:
   workflow_dispatch:
@@ -82,7 +82,7 @@ jobs:
         run: |
           [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it from main (got $GITHUB_REF)"; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::version must look like v1.2.3"; exit 1; }
-          [ "$HAS_KEY" = true ] || { echo "::error::secret QSRV_PHP_MIRROR_KEY is not set (see docs/development.md#releases)"; exit 1; }
+          [ "$HAS_KEY" = true ] || { echo "::error::secret QSRV_PHP_MIRROR_KEY is not set: run scripts/setup-release.sh once"; exit 1; }
       - uses: actions/checkout@v7
         with:
           ref: main
