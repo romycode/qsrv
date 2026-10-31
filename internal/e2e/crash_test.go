@@ -347,4 +347,3 @@ func tail(b []byte, n int) []byte {
 	}
 	return b
 }
-

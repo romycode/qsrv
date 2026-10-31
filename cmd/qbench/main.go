@@ -63,25 +63,39 @@ func main() {
 	groups := flag.Int("groups", 0, "spread messages over N ordering groups (0 = no groups)")
 	rate := flag.Float64("rate", 0, "total send rate msg/s (0 = as fast as possible)")
 	keep := flag.Bool("keep", false, "keep the benchmark queue afterwards")
+	tenants := flag.Int("tenants", 0, "spread the load over N tenants, one queue each, workers round-robin (needs an admin key, tenant *)")
 	flag.Parse()
 
 	ctx := context.Background()
 	c := client.New(*addr, *key)
-	qname := fmt.Sprintf("bench-%d", time.Now().UnixNano())
+	base := fmt.Sprintf("bench-%d", time.Now().UnixNano())
+	qnames := []string{base}
+	if *tenants > 0 {
+		qnames = qnames[:0]
+		for i := range *tenants {
+			qnames = append(qnames, fmt.Sprintf("bench%03d/%s", i, base))
+		}
+	}
 	zero := api.Duration(0)
-	if _, err := c.CreateQueue(ctx, qname, api.QueueConfig{
-		VisibilityTimeout: api.Duration(30 * time.Second),
-		Retry:             &api.RetryPolicy{MaxAttempts: 5},
-		Retention:         &zero,
-	}); err != nil {
-		fatal(err)
+	for _, q := range qnames {
+		if _, err := c.CreateQueue(ctx, q, api.QueueConfig{
+			VisibilityTimeout: api.Duration(30 * time.Second),
+			Retry:             &api.RetryPolicy{MaxAttempts: 5},
+			Retention:         &zero,
+		}); err != nil {
+			fatal(err)
+		}
 	}
 	if !*keep {
-		defer c.DeleteQueue(context.Background(), qname)
+		defer func() {
+			for _, q := range qnames {
+				c.DeleteQueue(context.Background(), q)
+			}
+		}()
 	}
 
-	fmt.Printf("queue=%s producers=%d consumers=%d size=%dB groups=%d rate=%v duration=%v\n",
-		qname, *producers, *consumers, *size, *groups, rateStr(*rate), *duration)
+	fmt.Printf("queues=%d (%s) producers=%d consumers=%d size=%dB groups=%d rate=%v duration=%v\n",
+		len(qnames), qnames[0], *producers, *consumers, *size, *groups, rateStr(*rate), *duration)
 
 	var sendS, recvS, ackS, e2eS samples
 	var sendErr, recvErr, ackErr, empty atomic.Int64
@@ -90,6 +104,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	for p := range *producers {
+		qname := qnames[p%len(qnames)]
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -131,7 +146,8 @@ func main() {
 		}()
 	}
 
-	for range *consumers {
+	for ci := range *consumers {
+		qname := qnames[ci%len(qnames)]
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -177,14 +193,18 @@ func main() {
 	wg.Wait()
 	elapsed := time.Since(start)
 
-	info, _ := c.GetQueue(ctx, qname)
+	backlog := 0
+	for _, q := range qnames {
+		info, _ := c.GetQueue(ctx, q)
+		backlog += info.Stats.Messages
+	}
 	fmt.Printf("\n%-9s %10s %9s %9s %9s %9s %9s\n", "op", "ops/s", "p50", "p90", "p99", "p99.9", "max")
 	fmt.Println(sendS.row("send", elapsed))
 	fmt.Println(recvS.row("receive", elapsed))
 	fmt.Println(ackS.row("ack", elapsed))
 	fmt.Println(e2eS.row("end2end", elapsed))
 	fmt.Printf("\nerrors: send=%d receive=%d ack=%d | empty polls=%d | backlog at end=%d\n",
-		sendErr.Load(), recvErr.Load(), ackErr.Load(), empty.Load(), info.Stats.Messages)
+		sendErr.Load(), recvErr.Load(), ackErr.Load(), empty.Load(), backlog)
 	fmt.Println("end2end = send start -> ack done (includes queueing time when consumers lag)")
 	if sendErr.Load()+recvErr.Load()+ackErr.Load() > 0 {
 		os.Exit(1) // results above are still printed; CI treats errors as failure

@@ -57,6 +57,27 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
 - On startup, live messages are loaded from SQLite; expired leases are
   redelivered on the first operation.
 
+## Crash test
+
+`internal/e2e` builds the real `qsrv` and kills it with `SIGKILL` over and
+over under load (two tenants, a topic fanning out to two queues, producers
+and consumers), then drains everything and checks qsrv's promises: no send
+or publish answered 201 is lost, and no message whose ack was answered 204
+is delivered again (other duplicates are allowed: at-least-once). CI runs 20
+rounds with each driver.
+
+```sh
+go test -tags e2e -run Crash -v ./internal/e2e/                                  # WASM
+QSRV_E2E_TAGS=sqlite_cgo QSRV_E2E_ROUNDS=50 go test -tags e2e -run Crash ./internal/e2e/
+```
+
+It catches both kinds of bug: answering 201 before the commit, or 204
+before the ack is synced, fail it within a few rounds. `kill -9` tests a
+process crash; the page cache survives it, so it does not test power loss
+(that relies on `synchronous=FULL` and the disk honoring fsync).
+
+`qbench -tenants N` (with an admin key) spreads the load over N tenants.
+
 ## CI
 
 One workflow per area, each triggered only when its files change (GitHub
