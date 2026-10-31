@@ -25,6 +25,7 @@ class ApiException extends \RuntimeException implements QsrvException
             'lease_gone' => new LeaseGoneException($status, $errorCode, $message),
             'already_exists' => new QueueExistsException($status, $errorCode, $message),
             'queue_full' => new QueueFullException($status, $errorCode, $message),
+            'storage_full' => new StorageFullException($status, $errorCode, $message),
             'unauthorized' => new UnauthorizedException($status, $errorCode, $message),
             default => new self($status, $errorCode, $message),
         };

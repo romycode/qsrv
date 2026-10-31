@@ -132,7 +132,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "qsrv data disk {{ $value | humanizePercentage }} free"
-          description: "When full, commits fail and qsrv exits. Lower retention, purge history or grow the EBS volume."
+          description: "Below -min-free-disk qsrv refuses sends (503 storage_full). Lower retention, purge history or grow the volume."
 
       - alert: QsrvDiskSpaceCritical
         expr: qsrv_disk_free_bytes / qsrv_disk_size_bytes < 0.05
@@ -140,6 +140,24 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "qsrv data disk {{ $value | humanizePercentage }} free"
+
+      - alert: QsrvStorageFull
+        expr: qsrv_storage_low == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "qsrv is refusing sends: free disk below -min-free-disk"
+          description: "Producers get 503 storage_full; consumers keep draining. Free space (grow the volume, lower retention, delete old snapshots) and sends resume within seconds."
+
+      - alert: QsrvBackupStale
+        # No complete snapshot in two intervals (or none since start). Only
+        # when -backup-dir is set.
+        expr: time() - qsrv_backup_last_success_timestamp_seconds > 2 * qsrv_backup_interval_seconds and on() time() - qsrv_start_time_seconds > 2 * qsrv_backup_interval_seconds
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "No qsrv snapshot completed in the last {{ $value | humanizeDuration }}"
+          description: "Check the logs for 'snapshot failed' (backup disk full or unwritable) and qsrv_backup_failures."
 
       - alert: QsrvDiskWillFill
         expr: predict_linear(qsrv_disk_free_bytes[6h], 3 * 24 * 3600) < 0

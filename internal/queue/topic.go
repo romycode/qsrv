@@ -46,6 +46,9 @@ func (b *Broker) CreateTopic(name string, queues []string) (Topic, error) {
 			return Topic{}, crossTenant("queue", name, q)
 		}
 	}
+	if err := b.checkDisk(); err != nil {
+		return Topic{}, err
+	}
 	st, err := b.storeFor(name)
 	if err != nil {
 		return Topic{}, err
@@ -171,6 +174,9 @@ func (b *Broker) updateSubs(topic string, fn func([]string) ([]string, error)) (
 // apply in each queue as for Send.
 func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.Duration) ([]Published, error) {
 	if err := validateSend(groupID, delay); err != nil {
+		return nil, err
+	}
+	if err := b.checkDisk(); err != nil {
 		return nil, err
 	}
 	body = append([]byte(nil), body...)

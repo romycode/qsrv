@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +39,10 @@ type Broker struct {
 	stores   map[string]*store // by tenant; "" = root database
 	closed   bool
 
+	diskLow   atomic.Bool
+	diskCheck func() // nil when the guard is off; tests call it
+	backups   *backups
+
 	history sync.RWMutex // replay (R) vs retention purge (W)
 	persist sync.RWMutex
 
@@ -61,6 +66,13 @@ type Options struct {
 	// SimulatedSyncLatency adds a sleep to every commit to emulate slower
 	// disks (e.g. EBS) when benchmarking. Never set in production.
 	SimulatedSyncLatency time.Duration
+	// MinFreeDisk: below this many free bytes on the data dir's filesystem,
+	// writes that add data fail with ErrStorageFull (see disk.go). 0 disables.
+	MinFreeDisk uint64
+	// FreeDisk overrides how free space is measured (tests).
+	FreeDisk func(dir string) (uint64, error)
+	// Backup enables periodic snapshots (see backup.go).
+	Backup BackupOptions
 }
 
 // Open loads state from the databases in dataDir (see stores.go) and starts
@@ -142,6 +154,10 @@ func Open(dataDir string, o Options) (*Broker, error) {
 	slog.Info("recovered", "tenants", len(b.stores)-1, "queues", len(b.queues), "topics", len(b.topics),
 		"live_messages", total, "took", time.Since(start).Round(time.Millisecond))
 
+	if err := b.startBackups(o.Backup); err != nil {
+		return fail(err)
+	}
+	b.watchDisk(o.MinFreeDisk, o.FreeDisk)
 	go b.janitor(o.JanitorEvery)
 	return b, nil
 }
@@ -167,6 +183,9 @@ func (b *Broker) Create(name string, cfg Config) (*Queue, error) {
 		return nil, fmt.Errorf("%w: queue cannot be its own DLQ", ErrInvalidConfig)
 	case cfg.DeadLetterQueue != "" && !sameTenant(name, cfg.DeadLetterQueue):
 		return nil, crossTenant("dead letter queue", name, cfg.DeadLetterQueue)
+	}
+	if err := b.checkDisk(); err != nil {
+		return nil, err
 	}
 	st, err := b.storeFor(name)
 	if err != nil {
@@ -371,6 +390,9 @@ func (b *Broker) Replay(src string, req ReplayRequest) (ReplayResult, error) {
 	}
 	if !sameTenant(src, req.To) {
 		return ReplayResult{}, crossTenant("replay destination", src, req.To)
+	}
+	if err := b.checkDisk(); err != nil {
+		return ReplayResult{}, err
 	}
 	srcQ, err := b.Get(src)
 	if err != nil {
