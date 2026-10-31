@@ -44,6 +44,7 @@ func run() error {
 		backupDir   = flag.String("backup-dir", os.Getenv("QSRV_BACKUP_DIR"), "take periodic snapshots of every tenant's database into this directory (empty disables; use another disk)")
 		backupEvery = flag.Duration("backup-every", durationEnv("QSRV_BACKUP_EVERY", time.Hour), "interval between snapshots")
 		backupKeep  = flag.Int("backup-keep", 24, "snapshots to keep (oldest are deleted)")
+		adminUI     = flag.Bool("admin", envOr("QSRV_ADMIN", "true") != "false", "serve the read-only admin UI at /admin/ (sign in with an API key)")
 		minFree     = flag.String("min-free-disk", envOr("QSRV_MIN_FREE_DISK", "1GiB"), "below this free space on the data dir, refuse sends with 503 storage_full (e.g. 500MiB, 2GiB; 0 disables)")
 		janitor     = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
 		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
@@ -128,7 +129,7 @@ func run() error {
 	srv := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 		Addr:              *addr,
-		Handler:           o.HTTPMiddleware(httpapi.New(broker, httpapi.Options{Auth: auth, MaxMessageBytes: *maxMsg})),
+		Handler:           o.HTTPMiddleware(httpapi.New(broker, httpapi.Options{Auth: auth, MaxMessageBytes: *maxMsg, Admin: *adminUI, Version: version})),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      httpapi.MaxWait + 10*time.Second, // must exceed long-poll wait

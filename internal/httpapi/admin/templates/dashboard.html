@@ -1,0 +1,95 @@
+{{define "body"}}
+{{template "header" .}}
+<main class="page" x-data="dashboard" data-admin="{{.Identity.Admin}}">
+  {{if .Error}}<p class="banner banner-error" role="alert">{{.Error}}</p>{{end}}
+  <p class="banner banner-error" role="alert" x-cloak x-show="error" x-text="error"></p>
+
+  <div class="page-head">
+    <h1>Queues</h1>
+    <p class="lede" x-cloak x-show="ov" x-text="summary()"></p>
+  </div>
+
+  <div class="toolbar" x-cloak x-show="ov && ov.queues.length > 0">
+    <label class="sr-only" for="filter">Filter queues</label>
+    <input id="filter" type="search" class="search" placeholder="Filter by name" x-model="filter" autocomplete="off">
+    <span class="legend" aria-hidden="true">
+      <span class="key key-ready">Ready</span>
+      <span class="key key-delayed">Delayed</span>
+      <span class="key key-inflight">In flight</span>
+      <span class="key key-waiting">Waiting in group</span>
+    </span>
+  </div>
+
+  <p class="loading" x-show="!ov && !error">Loading queues…</p>
+
+  <div class="empty" x-cloak x-show="ov && ov.queues.length === 0">
+    <h2>No queues yet</h2>
+    <p>Create one and it shows up here within a few seconds:</p>
+    <pre class="code">qctl create orders</pre>
+  </div>
+
+  <template x-for="g in groups()" :key="g.tenant">
+    <section class="group">
+      <h2 class="group-title" x-show="admin" x-text="g.tenant ? 'Tenant ' + g.tenant : 'Without tenant'"></h2>
+      <table class="queues">
+        <thead>
+          <tr>
+            <th scope="col" class="col-name">Queue</th>
+            <th scope="col" class="col-bar"><span class="sr-only">Composition</span></th>
+            <th scope="col" class="num">Ready</th>
+            <th scope="col" class="num">Delayed</th>
+            <th scope="col" class="num">In flight</th>
+            <th scope="col" class="num">Oldest</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="q in g.queues" :key="q.name">
+            <tr :class="{ 'row-alert': deadLetters(q) > 0 }">
+              <td class="col-name">
+                <a :href="queueURL(q.name)" x-text="g.tenant ? q.name.slice(g.tenant.length + 1) : q.name"></a>
+                <span class="tag tag-dlq" x-show="deadLetters(q) > 0" x-text="deadLetters(q) + ' dead ' + (deadLetters(q) === 1 ? 'letter' : 'letters')"></span>
+                <span class="tag" x-show="q.is_dead_letter_queue_of && deadLetters(q) === 0">DLQ</span>
+                <span class="tag tag-full" x-show="q.max_messages && q.messages >= q.max_messages">Full</span>
+              </td>
+              <td class="col-bar">
+                <div class="bar" x-show="q.messages > 0" role="img" :aria-label="barLabel(q)">
+                  <span class="seg seg-ready" :style="segStyle(q, q.ready)"></span>
+                  <span class="seg seg-delayed" :style="segStyle(q, q.delayed)"></span>
+                  <span class="seg seg-inflight" :style="segStyle(q, q.in_flight)"></span>
+                  <span class="seg seg-waiting" :style="segStyle(q, waiting(q))"></span>
+                </div>
+                <span class="muted small" x-show="q.messages === 0">Empty</span>
+              </td>
+              <td class="num" x-text="fmtNum(q.ready)"></td>
+              <td class="num" x-text="fmtNum(q.delayed)"></td>
+              <td class="num" x-text="fmtNum(q.in_flight)"></td>
+              <td class="num" :class="ageClass(q)" :title="q.oldest_enqueued_at ? 'Enqueued ' + fmtTime(q.oldest_enqueued_at) : ''" x-text="q.oldest_enqueued_at ? age(q.oldest_enqueued_at) : '–'"></td>
+            </tr>
+          </template>
+          <tr x-show="g.queues.length === 0"><td colspan="6" class="muted">No queue matches the filter.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </template>
+
+  <section class="topics" x-cloak x-show="ov && ov.topics.length > 0">
+    <h2>Topics</h2>
+    <p class="muted">A message published to a topic is copied to every queue subscribed to it.</p>
+    <ul class="topic-list">
+      <template x-for="t in topics()" :key="t.name">
+        <li>
+          <span class="topic-name" x-text="t.name"></span>
+          <span class="muted" x-show="t.queues.length === 0">No subscribers: published messages are dropped.</span>
+          <span class="topic-subs" x-show="t.queues.length > 0">
+            <template x-for="name in t.queues" :key="name">
+              <a :href="queueURL(name)" class="chip" x-text="name"></a>
+            </template>
+          </span>
+        </li>
+      </template>
+    </ul>
+  </section>
+
+  <p class="updated" x-cloak x-show="ov" x-text="'Updated every 3 seconds. Last update ' + clock(lastUpdate) + '.'"></p>
+</main>
+{{end}}

@@ -10,6 +10,7 @@ Named FIFO queues over HTTP, with:
 - **topics**: publish once, every subscribed queue gets a copy, atomically;
 - **history and replay** of processed messages;
 - **multitenancy**: each API key belongs to a tenant and only sees its queues;
+- **admin UI** at `/admin/`: queues, topics and messages at a glance, read-only;
 - every acknowledged write is **fsynced**: a crash never loses what a client saw.
 
 Clients for **Go** and **PHP**, a **Symfony Messenger** transport, a CLI,
@@ -126,6 +127,15 @@ qctl topic create NAME [QUEUE...] | sub|unsub NAME QUEUE | publish [-group G] NA
 `consume` heartbeats the lease while the command runs, exports
 `QSRV_MESSAGE_ID`, `QSRV_GROUP_ID` and `QSRV_ATTEMPTS`, and on SIGINT lets
 running jobs finish. `qctl <command> -h` lists each command's flags.
+
+### Admin UI
+
+Open `http://localhost:8080/admin/` and sign in with an API key: every
+queue of the key's tenant (or of every tenant, with an admin key), what is
+waiting and for how long, dead letters, and each message's body. Read-only.
+[More](docs/operations.md#admin-ui).
+
+![Admin UI](docs/images/admin-dashboard.png)
 
 ## Documentation
 

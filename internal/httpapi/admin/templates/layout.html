@@ -1,0 +1,39 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} – qsrv</title>
+<link rel="icon" href="{{asset "icon.svg"}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{asset "app.css"}}">
+<script src="{{asset "theme.js"}}"></script>
+<script src="{{asset "app.js"}}" defer></script>
+<script src="{{asset "alpine-3.17.4.min.js"}}" defer></script>
+</head>
+<body>
+{{template "body" .}}
+</body>
+</html>{{end}}
+
+{{define "header"}}
+<header class="top">
+  <a class="brand" href="/admin/" aria-label="qsrv, all queues">
+    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="4" height="14" rx="1"/><rect x="8" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1" class="brand-mark-dim"/><path d="M20 12h2"/></svg>
+    <span>qsrv</span>
+  </a>
+  <div class="top-right">
+    <span class="who">
+      {{if .NoAuth}}<span class="warn-text">Authentication is off</span>
+      {{else if .Identity.Admin}}All tenants<span class="who-key">key {{.Identity.Name}}</span>
+      {{else}}Tenant {{.Identity.Tenant}}<span class="who-key">key {{.Identity.Name}}</span>{{end}}
+    </span>
+    <button type="button" class="icon-button" data-theme-toggle aria-label="Switch between light and dark theme" title="Light or dark theme">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 7a5 5 0 0 1 0 10z" class="fill"/></svg>
+    </button>
+    {{if not .NoAuth}}
+    <form method="post" action="/admin/logout"><button type="submit" class="link-button">Sign out</button></form>
+    {{end}}
+  </div>
+</header>
+{{end}}
