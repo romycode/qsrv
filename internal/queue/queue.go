@@ -110,6 +110,7 @@ type Queue struct {
 	name string
 	cfg  Config
 	b    *Broker
+	st   *store // the store of the queue's tenant
 
 	mu       sync.Mutex
 	ready    *heapOf[*Message] // by seq
@@ -128,11 +129,12 @@ type Queue struct {
 	orderHead int
 }
 
-func newQueue(name string, cfg Config, b *Broker) *Queue {
+func newQueue(name string, cfg Config, b *Broker, st *store) *Queue {
 	return &Queue{
 		name:     name,
 		cfg:      cfg,
 		b:        b,
+		st:       st,
 		ready:    newHeap(func(a, b *Message) bool { return a.seq < b.seq }),
 		delayed:  newHeap(func(a, b *Message) bool { return a.availableAt.Before(b.availableAt) }),
 		inflight: make(map[string]*lease),
@@ -167,13 +169,13 @@ func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (M
 		return Message{}, err
 	}
 	m, rec := q.newMessageLocked(body, groupID, delay, q.b.clock.Now())
-	pos := q.b.store.append(op{kind: opInsert, queue: q.name, msg: rec})
+	pos := q.st.append(op{kind: opInsert, queue: q.name, msg: rec})
 	q.addLocked(m)
 	out := m.public()
 	q.mu.Unlock()
 	q.b.persist.RUnlock()
 
-	q.b.store.waitSync(pos) // 201 only after commit
+	q.st.waitSync(pos) // 201 only after commit
 	q.b.hooks.Event(q.name, EvSent, 1)
 	out.Body = body
 	return out, nil
@@ -230,8 +232,8 @@ func (q *Queue) Receive(ctx context.Context, wait time.Duration) (Delivery, erro
 			q.b.persist.RUnlock()
 			// Durable before handing out. Ops commit in order, so this also
 			// persists the ack that unblocked this message's group.
-			q.b.store.sync()
-			body, err := q.b.store.body(q.name, d.Message.ID)
+			q.st.sync()
+			body, err := q.st.body(q.name, d.Message.ID)
 			if err != nil {
 				// Lease stays; it will expire and the message is retried.
 				return Delivery{}, fmt.Errorf("load body %s/%s: %w", q.name, d.Message.ID, err)
@@ -273,7 +275,7 @@ func (q *Queue) Receive(ctx context.Context, wait time.Duration) (Delivery, erro
 
 func (q *Queue) Ack(leaseID string) error {
 	err := q.settle(leaseID, func(m *Message, now time.Time) bool {
-		q.b.store.append(op{kind: opAck, queue: q.name, id: m.ID, at: now})
+		q.st.append(op{kind: opAck, queue: q.name, id: m.ID, at: now})
 		q.finishLocked(m)
 		return false
 	})
@@ -329,7 +331,7 @@ func (q *Queue) Extend(leaseID string, d time.Duration) (time.Time, error) {
 		nl.msg.lease = nl
 		heap.Push(q.expiries, nl)
 		deadline = nl.deadline
-		q.b.store.append(op{kind: opExtend, queue: q.name, id: nl.msg.ID, at: deadline})
+		q.st.append(op{kind: opExtend, queue: q.name, id: nl.msg.ID, at: deadline})
 	}
 	q.mu.Unlock()
 	q.flushDead(dead)
@@ -337,7 +339,7 @@ func (q *Queue) Extend(leaseID string, d time.Duration) (time.Time, error) {
 	if !ok {
 		return time.Time{}, ErrLeaseNotFound
 	}
-	q.b.store.sync()
+	q.st.sync()
 	return deadline, nil
 }
 
@@ -351,7 +353,7 @@ func (q *Queue) Stats() Stats {
 		Groups:   len(q.groups),
 	}
 	q.mu.Unlock()
-	s.History = q.b.store.historyCount(q.name)
+	s.History = q.st.historyCount(q.name)
 	return s
 }
 
@@ -411,7 +413,7 @@ func (q *Queue) ingest(src string, old *Message) bool {
 	}
 	q.seq++
 	m := &Message{ID: old.ID, GroupID: old.GroupID, EnqueuedAt: q.b.clock.Now(), ReplayOf: old.ReplayOf, seq: q.seq}
-	q.b.store.append(op{kind: opMove, queue: src, id: old.ID, dst: q.name, msg: msgRecord{Seq: m.seq, EnqueuedAt: m.EnqueuedAt}})
+	q.st.append(op{kind: opMove, queue: src, id: old.ID, dst: q.name, msg: msgRecord{Seq: m.seq, EnqueuedAt: m.EnqueuedAt}})
 	q.addLocked(m)
 	q.b.hooks.Event(q.name, EvDeadLetterIn, 1)
 	return true
@@ -431,7 +433,7 @@ func (q *Queue) replayInsert(src string, rows []historyRow) (int, error) {
 	for _, r := range rows {
 		q.seq++
 		m := &Message{ID: newID(), GroupID: r.GroupID, EnqueuedAt: now, ReplayOf: r.ID, seq: q.seq}
-		q.b.store.append(op{kind: opCopy, queue: src, id: r.ID, dst: q.name, msg: msgRecord{ID: m.ID, Seq: m.seq, EnqueuedAt: now}})
+		q.st.append(op{kind: opCopy, queue: src, id: r.ID, dst: q.name, msg: msgRecord{ID: m.ID, Seq: m.seq, EnqueuedAt: now}})
 		q.addLocked(m)
 	}
 	q.b.hooks.Event(q.name, EvReplayIn, len(rows))
@@ -444,7 +446,7 @@ func (q *Queue) settle(leaseID string, fn func(*Message, time.Time) (dead bool))
 	if err := q.settleLocked(leaseID, fn); err != nil {
 		return err
 	}
-	q.b.store.sync() // 204 on ack means it will not come back after a crash
+	q.st.sync() // 204 on ack means it will not come back after a crash
 	return nil
 }
 
@@ -560,7 +562,7 @@ func (q *Queue) leaseLocked(m *Message, now time.Time) Delivery {
 	m.lease = l
 	q.inflight[l.id] = l
 	heap.Push(q.expiries, l)
-	q.b.store.append(op{kind: opDeliver, queue: q.name, id: m.ID, lease: l.id, at: l.deadline})
+	q.st.append(op{kind: opDeliver, queue: q.name, id: m.ID, lease: l.id, at: l.deadline})
 	return Delivery{Message: m.public(), LeaseID: l.id, ExpiresAt: l.deadline}
 }
 
@@ -574,12 +576,12 @@ func (q *Queue) failLocked(m *Message, now time.Time) bool {
 	if d := q.cfg.Retry.Delay(m.Attempts); d > 0 {
 		m.state, m.availableAt = stateDelayed, now.Add(d)
 		heap.Push(q.delayed, m)
-		q.b.store.append(op{kind: opFail, queue: q.name, id: m.ID, at: m.availableAt})
+		q.st.append(op{kind: opFail, queue: q.name, id: m.ID, at: m.availableAt})
 		return false
 	}
 	m.state, m.availableAt = stateReady, time.Time{}
 	heap.Push(q.ready, m) // original seq => original FIFO position
-	q.b.store.append(op{kind: opFail, queue: q.name, id: m.ID})
+	q.st.append(op{kind: opFail, queue: q.name, id: m.ID})
 	q.signalLocked()
 	return false
 }
@@ -644,7 +646,7 @@ func (q *Queue) flushDead(msgs []*Message) {
 				continue
 			}
 		}
-		q.b.store.append(op{kind: opDrop, queue: q.name, id: m.ID, at: q.b.clock.Now()})
+		q.st.append(op{kind: opDrop, queue: q.name, id: m.ID, at: q.b.clock.Now()})
 		q.b.hooks.Event(q.name, EvDropped, 1)
 		slog.Warn("message dropped after exhausting retries", "queue", q.name, "id", m.ID, "attempts", m.Attempts)
 	}

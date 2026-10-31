@@ -46,6 +46,10 @@ func (b *Broker) CreateTopic(name string, queues []string) (Topic, error) {
 			return Topic{}, crossTenant("queue", name, q)
 		}
 	}
+	st, err := b.storeFor(name)
+	if err != nil {
+		return Topic{}, err
+	}
 	b.persist.RLock()
 	b.mu.Lock()
 	if _, ok := b.topics[name]; ok {
@@ -59,11 +63,11 @@ func (b *Broker) CreateTopic(name string, queues []string) (Topic, error) {
 		return Topic{}, err
 	}
 	b.topics[name] = subs
-	pos := b.store.append(op{kind: opTopicSet, queue: name, subs: subs, at: b.clock.Now()})
+	pos := st.append(op{kind: opTopicSet, queue: name, subs: subs, at: b.clock.Now()})
 	b.mu.Unlock()
 	b.persist.RUnlock()
 
-	b.store.waitSync(pos)
+	st.waitSync(pos)
 	return Topic{Name: name, Queues: slices.Clone(subs)}, nil
 }
 
@@ -99,11 +103,12 @@ func (b *Broker) DeleteTopic(name string) error {
 		return ErrTopicNotFound
 	}
 	delete(b.topics, name)
-	pos := b.store.append(op{kind: opTopicDelete, queue: name})
+	st := b.storeOf(name) // open: the topic exists
+	pos := st.append(op{kind: opTopicDelete, queue: name})
 	b.mu.Unlock()
 	b.persist.RUnlock()
 
-	b.store.waitSync(pos)
+	st.waitSync(pos)
 	return nil
 }
 
@@ -148,14 +153,15 @@ func (b *Broker) updateSubs(topic string, fn func([]string) ([]string, error)) (
 		return Topic{}, err
 	}
 	var pos uint64
+	st := b.storeOf(topic) // open: the topic exists
 	if !slices.Equal(next, subs) {
 		b.topics[topic] = next
-		pos = b.store.append(op{kind: opTopicSet, queue: topic, subs: next, at: b.clock.Now()})
+		pos = st.append(op{kind: opTopicSet, queue: topic, subs: next, at: b.clock.Now()})
 	}
 	b.mu.Unlock()
 	b.persist.RUnlock()
 
-	b.store.waitSync(pos)
+	st.waitSync(pos)
 	return Topic{Name: topic, Queues: slices.Clone(next)}, nil
 }
 
@@ -207,7 +213,8 @@ func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.D
 		m, rec := q.newMessageLocked(body, groupID, delay, now)
 		msgs[i], ops[i] = m, op{kind: opInsert, queue: q.name, msg: rec}
 	}
-	pos := b.store.appendAll(ops) // one transaction
+	st := b.storeOf(topic)   // every subscriber is in the topic's tenant
+	pos := st.appendAll(ops) // one transaction
 	out := make([]Published, len(queues))
 	for i, q := range queues {
 		q.addLocked(msgs[i])
@@ -216,7 +223,7 @@ func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.D
 	}
 	unlock()
 
-	b.store.waitSync(pos)
+	st.waitSync(pos)
 	for _, q := range queues {
 		b.hooks.Event(q.name, EvSent, 1)
 	}

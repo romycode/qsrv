@@ -28,7 +28,7 @@ export QSRV_API_KEYS="acme:billing:$(openssl rand -hex 32)"   # tenant:name:key,
 | Flag / env | Default | |
 |---|---|---|
 | `-addr` / `QSRV_ADDR` | `:8080` | |
-| `-data-dir` / `QSRV_DATA_DIR` | `./data` | holds `qsrv.db`; flock'd, one process per dir |
+| `-data-dir` / `QSRV_DATA_DIR` | `./data` | one SQLite database per tenant (`tenants/<tenant>/qsrv.db`); flock'd, one process per dir. See [Data directory](#data-directory) |
 | `-api-keys-file` / `QSRV_API_KEYS_FILE`, `QSRV_API_KEYS` | — | `tenant:name:key` entries; required unless `-insecure-no-auth`. See [API keys and tenants](#api-keys-and-tenants) |
 | `-tls-cert`, `-tls-key` | — | serve HTTPS directly; otherwise put TLS in front |
 | `-max-message-bytes` | 256KiB | |
@@ -73,10 +73,12 @@ subscription or a replay into another tenant). `-insecure-no-auth` makes
 every request an admin.
 
 There is no tenant to create: a tenant exists as soon as a key names it, and
-its queues appear when it creates them. Isolation is of names and data, not
-of resources: tenants share the process, the disk and the single SQLite
-writer, so one tenant's load slows the others. For hard isolation run one
-qsrv per tenant.
+its queues appear when it creates them. Each tenant has **its own SQLite
+database** (and its own writer and fsyncs), created with its first queue or
+topic: a tenant's commits don't wait for another's, and a tenant's data is
+one file you can back up, move or delete. Tenants still share the process,
+CPU and disk bandwidth, and there are no per-tenant quotas: for hard
+isolation run one qsrv per tenant.
 
 **Rotation without restarts**: edit the keys file (or `QSRV_API_KEYS`) and
 send `SIGHUP` (`kill -HUP <pid>`, `docker kill -s HUP qsrv`). The new set
@@ -87,12 +89,22 @@ reload, move the clients, remove the old entry, reload.
 **Access logs** carry `tenant` and `key` (the name). Metrics label queues
 with their full name (`queue="acme/orders"`).
 
-**Upgrading data from before tenants**: qsrv refuses to start while a queue
-or topic has no tenant. Stop it and move them into one:
+## Data directory
 
-```sh
-qsrv -data-dir /var/lib/qsrv -assign-tenant acme   # queues, topics, messages, history, DLQs: one transaction
 ```
+data/
+  qsrv.db                    names without a tenant: unused by the server (only the Go library uses them)
+  tenants/acme/qsrv.db       one database per tenant, each with its -wal and -shm
+  tenants/globex/qsrv.db
+  .wasmcache/                compiled SQLite (WASM build), safe to delete
+```
+
+Every queue, topic, message and its history live in their tenant's
+database: dead letter queues, topics and replays never cross tenants, so
+every write is a transaction in exactly one database. On startup qsrv opens
+every `tenants/*/qsrv.db`; each open database costs about 1 MB of memory and
+6 file descriptors (100 tenants: ~100 MB, 600 fds; raise `ulimit -n` if
+needed).
 
 ## Docker
 
@@ -112,7 +124,7 @@ docker run -d --name qsrv -p 8080:8080 \
   ghcr.io/romycode/qsrv:latest
 ```
 
-- **Data**: `/data` (volume). It holds `qsrv.db` and the compiled-SQLite cache;
+- **Data**: `/data` (volume). It holds the databases (see [Data directory](#data-directory)) and the compiled-SQLite cache;
   one container per volume.
 - **Config**: same flags as the binary (`docker run ... ghcr.io/romycode/qsrv -retention-check 5m`)
   or env vars. The image sets `QSRV_ADDR=:8080`, `QSRV_DATA_DIR=/data` and
@@ -131,8 +143,18 @@ Compose file with a volume and private metrics: [deploy/docker-compose.yml](../d
 
 The single-node weak point is the disk. Options, from least to most effort:
 
-- `sqlite3 data/qsrv.db "VACUUM INTO '/backup/qsrv-$(date +%F).db'"` from cron (hot, consistent).
-- [Litestream](https://litestream.io) continuously replicating `qsrv.db` to
+- `VACUUM INTO` every database from cron (hot, consistent per tenant):
+
+  ```sh
+  cd data && for db in qsrv.db tenants/*/qsrv.db; do
+    mkdir -p "/backup/$(date +%F)/$(dirname "$db")"
+    sqlite3 "$db" "VACUUM INTO '/backup/$(date +%F)/$db'"
+  done
+  ```
+
+  To restore, stop qsrv and put the files back in the same layout. A single
+  tenant can be restored alone.
+- [Litestream](https://litestream.io) continuously replicating every database to
   S3/R2/GCS: point-in-time restore with seconds of RPO, no code changes
   (the database already runs in WAL mode).
 
@@ -153,7 +175,7 @@ Ready-to-use rules in `deploy/prometheus/alerts.yml` (thresholds marked `TUNE`).
 | `qsrv_store_pending_writes` | gauge | ops waiting for the disk |
 | `qsrv_http_requests_total{route,method,code}` | counter | route = ServeMux pattern (bounded cardinality) |
 | `qsrv_http_request_duration_seconds{route}` | histogram | receive includes long-poll wait |
-| `qsrv_disk_free_bytes`, `qsrv_disk_size_bytes`, `qsrv_db_size_bytes{file}` | gauge | capacity planning, WAL growth |
+| `qsrv_disk_free_bytes`, `qsrv_disk_size_bytes`, `qsrv_db_size_bytes{tenant,file}` | gauge | capacity planning, WAL growth |
 | `qsrv_queue_info`, `qsrv_queue_max_messages`, `qsrv_build_info`, `qsrv_start_time_seconds`, process/Go stats | gauge | context for alerts |
 
 Alerts included: down, restart loop, 5xx ratio, messages too old (warning /
