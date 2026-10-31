@@ -41,6 +41,7 @@ jobs:
   stack:
     name: Rules and dashboards
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -86,7 +87,13 @@ jobs:
           export PATH="$RUNNER_TEMP/bin:$PATH"
           .github/ci/monitoring/load.sh setup
           # Prometheus must see the new queues' counters at 0 before the events.
-          until curl -sf 'localhost:9090/api/v1/query?query=qsrv_messages_total{queue="ci/orders",event="dead_lettered"}' | grep -q '"value"'; do sleep 2; done
+          q='qsrv_messages_total{queue="ci/orders",event="dead_lettered"}'
+          for _ in $(seq 60); do
+            curl -sfG localhost:9090/api/v1/query --data-urlencode "query=$q" | grep -q '"value"' && break
+            sleep 2
+          done
+          curl -sfG localhost:9090/api/v1/query --data-urlencode "query=$q" | grep -q '"value"' \
+            || { echo "::error::Prometheus never saw $q at 0"; exit 1; }
           .github/ci/monitoring/load.sh traffic
 
       - name: Alerts fire
