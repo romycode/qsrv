@@ -43,7 +43,7 @@ func run() error {
 		maxMsg      = flag.Int64("max-message-bytes", 256<<10, "max message size")
 		backupDir   = flag.String("backup-dir", os.Getenv("QSRV_BACKUP_DIR"), "take periodic snapshots of every tenant's database into this directory (empty disables; use another disk)")
 		backupEvery = flag.Duration("backup-every", durationEnv("QSRV_BACKUP_EVERY", time.Hour), "interval between snapshots")
-		backupKeep  = flag.Int("backup-keep", 24, "snapshots to keep (oldest are deleted)")
+		backupKeep  = flag.Int("backup-keep", intEnv("QSRV_BACKUP_KEEP", 24), "snapshots to keep (oldest are deleted)")
 		adminUI     = flag.Bool("admin", envOr("QSRV_ADMIN", "true") != "false", "serve the read-only admin UI at /admin/ (sign in with an API key)")
 		minFree     = flag.String("min-free-disk", envOr("QSRV_MIN_FREE_DISK", "1GiB"), "below this free space on the data dir, refuse sends with 503 storage_full (e.g. 500MiB, 2GiB; 0 disables)")
 		janitor     = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
@@ -281,6 +281,16 @@ func durationEnv(k string, def time.Duration) time.Duration {
 			return d
 		}
 		slog.Warn("ignoring invalid duration", "env", k, "value", v)
+	}
+	return def
+}
+
+func intEnv(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+		slog.Warn("ignoring invalid number", "env", k, "value", v)
 	}
 	return def
 }

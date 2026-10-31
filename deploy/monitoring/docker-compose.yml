@@ -12,6 +12,9 @@ services:
       QSRV_API_KEYS: ${QSRV_API_KEYS:?set QSRV_API_KEYS in deploy/monitoring/.env}
       QSRV_BACKUP_DIR: /backup # snapshots; in production put this volume on another disk
       QSRV_BACKUP_EVERY: ${QSRV_BACKUP_EVERY:-1h}
+      QSRV_BACKUP_KEEP: ${QSRV_BACKUP_KEEP:-24}
+      QSRV_MIN_FREE_DISK: ${QSRV_MIN_FREE_DISK:-1GiB}
+      QSRV_ADMIN: ${QSRV_ADMIN:-true}
     ports:
       - "8080:8080"
     volumes:
