@@ -81,7 +81,8 @@ for path in paths:
         status, res = call("GET", f"/api/datasources/proxy/uid/prometheus/api/v1/label/{m.group(2)}/values?match[]=" + urllib.request.quote(m.group(1)))
         values = res.get("data", []) if status == 200 else []
         if v.get("regex"):
-            rx = re.compile(v["regex"].strip("/"))
+            r = v["regex"]
+            rx = re.compile(r[1:r.rindex("/")] if r.startswith("/") else r)  # Grafana writes /pattern/flags
             values = sorted({mm.group(1) for x in values if (mm := rx.search(x))})
         if not values:
             failures.append(f"{uid}: variable ${v['name']} has no values ({status}: {q})")
