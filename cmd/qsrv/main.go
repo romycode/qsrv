@@ -35,7 +35,7 @@ func main() {
 func run() error {
 	var (
 		addr        = flag.String("addr", envOr("QSRV_ADDR", ":8080"), "listen address")
-		dataDir     = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for the SQLite databases (one per tenant)")
+		dataDir     = flag.String("data-dir", envOr("QSRV_DATA_DIR", "./data"), "directory for qsrv.db (SQLite)")
 		keysFile    = flag.String("api-keys-file", os.Getenv("QSRV_API_KEYS_FILE"), "file with one tenant:name:key entry per line (SIGHUP reloads it)")
 		insecure    = flag.Bool("insecure-no-auth", false, "disable authentication (local development only)")
 		tlsCert     = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
@@ -49,6 +49,8 @@ func run() error {
 		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
 		metricsAddr = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
 		logLevel    = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")
+		restoreT    = flag.String("restore-tenant", "", "replace this tenant's queues, topics and messages with their state in the snapshot given by -from, then exit (qsrv stopped)")
+		restoreFrom = flag.String("from", "", "snapshot directory for -restore-tenant (a directory inside -backup-dir)")
 		healthcheck = flag.Bool("healthcheck", false, "probe GET /healthz on -addr and exit 0 if healthy (for container health checks)")
 		showVersion = flag.Bool("version", false, "print the version and exit")
 	)
@@ -60,6 +62,24 @@ func run() error {
 	}
 	if *healthcheck {
 		return probe(*addr, *tlsCert != "")
+	}
+
+	if *restoreT != "" {
+		if *restoreFrom == "" {
+			return errors.New("-restore-tenant needs -from SNAPSHOT_DIR")
+		}
+		lock, err := lockDir(*dataDir)
+		if err != nil {
+			return fmt.Errorf("%w (stop qsrv before restoring)", err)
+		}
+		defer lock.Close()
+		r, err := queue.RestoreTenant(*dataDir, *restoreFrom, *restoreT)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("restored tenant %q from %s: %d queues, %d topics, %d messages (live and history)\n",
+			*restoreT, *restoreFrom, r.Queues, r.Topics, r.Messages)
+		return nil
 	}
 
 	var lvl slog.Level

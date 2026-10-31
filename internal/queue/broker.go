@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -23,21 +24,20 @@ const (
 	MaxReplayLimit     = 10000
 )
 
-// Broker owns all queues and one store (SQLite database) per tenant.
+// Broker owns all queues and the store: one SQLite database for every
+// tenant, so concurrent commits of all tenants share one transaction and one
+// fsync (group commit).
 //
 // Lock order: history -> persist -> b.mu -> q.mu -> store internals.
-// storesMu is a leaf: held only to look up or open a store.
 // Every op that mutates state and logs it holds persist.RLock throughout;
 // Delete takes persist.Lock so no op on a queue can land after its delete.
 type Broker struct {
 	clock   Clock
 	hooks   Hooks
 	dataDir string
-	opts    Options
 
-	storesMu sync.Mutex
-	stores   map[string]*store // by tenant; "" = root database
-	closed   bool
+	store  *store
+	closed atomic.Bool
 
 	diskLow   atomic.Bool
 	diskCheck func() // nil when the guard is off; tests call it
@@ -75,8 +75,7 @@ type Options struct {
 	Backup BackupOptions
 }
 
-// Open loads state from the databases in dataDir (see stores.go) and starts
-// the broker.
+// Open loads state from dataDir/qsrv.db and starts the broker.
 func Open(dataDir string, o Options) (*Broker, error) {
 	if o.Clock == nil {
 		o.Clock = realClock{}
@@ -95,63 +94,36 @@ func Open(dataDir string, o Options) (*Broker, error) {
 	}
 	start := time.Now()
 	configureDriver(dataDir)
+	st, err := openStore(filepath.Join(dataDir, dbFile), o.NoSync, o.OnFatal)
+	if err != nil {
+		return nil, err
+	}
+	st.extraLatency = o.SimulatedSyncLatency
+	st.onCommit = o.Hooks.commit
 
 	b := &Broker{
-		clock: o.Clock, hooks: o.Hooks, dataDir: dataDir, opts: o,
-		stores: map[string]*store{}, queues: map[string]*Queue{}, topics: map[string][]string{},
-		stop: make(chan struct{}), done: make(chan struct{}),
+		clock: o.Clock, hooks: o.Hooks, dataDir: dataDir, store: st,
+		queues: map[string]*Queue{}, stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	fail := func(err error) (*Broker, error) {
-		for _, st := range b.stores {
-			st.close()
-		}
+		st.close()
 		return nil, err
 	}
-
-	root, err := b.openStore("")
+	loaded, err := st.load()
 	if err != nil {
-		return nil, err
+		return fail(fmt.Errorf("load state: %w", err))
 	}
-	b.stores[""] = root
-	tenants, err := tenantDirs(dataDir)
-	if err != nil {
-		return fail(err)
+	if b.topics, err = st.loadTopics(); err != nil {
+		return fail(fmt.Errorf("load topics: %w", err))
 	}
-	for _, t := range tenants {
-		st, err := b.openStore(t)
-		if err != nil {
-			return fail(err)
-		}
-		b.stores[t] = st
-	}
-
 	total := 0
-	for t, st := range b.stores {
-		loaded, err := st.load()
-		if err != nil {
-			return fail(fmt.Errorf("load state of tenant %q: %w", t, err))
-		}
-		topics, err := st.loadTopics()
-		if err != nil {
-			return fail(fmt.Errorf("load topics of tenant %q: %w", t, err))
-		}
-		for _, lq := range loaded {
-			if tt, _ := SplitName(lq.name); tt != t {
-				return fail(fmt.Errorf("database of tenant %q holds queue %q", t, lq.name))
-			}
-			q := newQueue(lq.name, lq.cfg, b, st)
-			q.restore(lq)
-			b.queues[lq.name] = q
-			total += len(lq.msgs)
-		}
-		for name, subs := range topics {
-			if tt, _ := SplitName(name); tt != t {
-				return fail(fmt.Errorf("database of tenant %q holds topic %q", t, name))
-			}
-			b.topics[name] = subs
-		}
+	for _, lq := range loaded {
+		q := newQueue(lq.name, lq.cfg, b, st)
+		q.restore(lq)
+		b.queues[lq.name] = q
+		total += len(lq.msgs)
 	}
-	slog.Info("recovered", "tenants", len(b.stores)-1, "queues", len(b.queues), "topics", len(b.topics),
+	slog.Info("recovered", "queues", len(b.queues), "topics", len(b.topics),
 		"live_messages", total, "took", time.Since(start).Round(time.Millisecond))
 
 	if err := b.startBackups(o.Backup); err != nil {
@@ -187,10 +159,7 @@ func (b *Broker) Create(name string, cfg Config) (*Queue, error) {
 	if err := b.checkDisk(); err != nil {
 		return nil, err
 	}
-	st, err := b.storeFor(name)
-	if err != nil {
-		return nil, err
-	}
+	st := b.store
 
 	b.persist.RLock()
 	b.mu.Lock()
@@ -317,25 +286,11 @@ func (b *Broker) Queues() []*Queue {
 	return out
 }
 
-// PendingWrites is the number of ops waiting for the writers of all tenants.
-func (b *Broker) PendingWrites() int {
-	n := 0
-	for _, st := range b.allStores() {
-		n += st.pendingLen()
-	}
-	return n
-}
+// PendingWrites is the number of ops waiting for the writer.
+func (b *Broker) PendingWrites() int { return b.store.pendingLen() }
 
-// CommitStats reports group-commit efficiency over all tenants: transactions
-// and ops committed.
-func (b *Broker) CommitStats() (commits, ops uint64) {
-	for _, st := range b.allStores() {
-		c, o := st.commitStats()
-		commits += c
-		ops += o
-	}
-	return commits, ops
-}
+// CommitStats reports group-commit efficiency: transactions and ops committed.
+func (b *Broker) CommitStats() (commits, ops uint64) { return b.store.commitStats() }
 
 func (b *Broker) List() []string {
 	b.mu.RLock()
@@ -493,14 +448,8 @@ func (b *Broker) Close() error {
 		<-b.done
 		b.persist.Lock() // wait for in-flight operations
 		defer b.persist.Unlock()
-		b.storesMu.Lock()
-		defer b.storesMu.Unlock()
-		b.closed = true
-		var errs []error
-		for _, st := range b.stores {
-			errs = append(errs, st.close())
-		}
-		b.closeErr = errors.Join(errs...)
+		b.closed.Store(true)
+		b.closeErr = b.store.close()
 	})
 	return b.closeErr
 }

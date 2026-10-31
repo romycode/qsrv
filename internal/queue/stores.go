@@ -1,134 +1,123 @@
 package queue
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 )
 
-// One SQLite database per tenant. Each has its own writer goroutine (group
-// commit), WAL and fsyncs, so a busy tenant doesn't queue behind another's
-// commits, and a tenant can be backed up, moved or deleted as one file.
-// Every reference between queues (dead letter queues, topics, replay) stays
-// within a tenant, so every op lands in exactly one database.
-//
-// Layout of the data dir:
-//
-//	qsrv.db                  names without a tenant (tests, embedders)
-//	tenants/<tenant>/qsrv.db one per tenant, created with its first queue or topic
+// All tenants share one SQLite database, data-dir/qsrv.db: concurrent
+// commits of every tenant go in one transaction with one fsync (group
+// commit). Measured against one database per tenant (100 tenants, 10KB
+// messages): ~1.6x lower latency, half the CPU, a quarter of the memory.
+// Tenants are separated by the "tenant/" prefix of every name; a tenant can
+// still be restored alone from a snapshot (RestoreTenant).
 
-const (
-	dbFile     = "qsrv.db"
-	tenantsDir = "tenants"
-)
+const dbFile = "qsrv.db"
 
 // ErrClosed is returned by operations on a closed broker.
 var ErrClosed = errors.New("queue: broker closed")
 
-// StoreFile is a tenant's database file ("" is the root database).
-type StoreFile struct {
-	Tenant string
-	Path   string
+// tenantRange is the [lo, hi) range of names in tenant t: every name starts
+// with "t/", and '0' is the byte after '/'. Uses the name indexes, and
+// unlike LIKE needs no escaping of '_'.
+func tenantRange(t string) (lo, hi string) { return t + TenantSep, t + "0" }
+
+// RestoreResult counts what RestoreTenant put back.
+type RestoreResult struct {
+	Queues, Topics, Messages int64
 }
 
-func storePath(dataDir, tenant string) string {
-	if tenant == "" {
-		return filepath.Join(dataDir, dbFile)
+// RestoreTenant replaces everything of tenant in dataDir (queues, topics,
+// live messages and history) with its state in the snapshot at snapshotDir,
+// in one transaction. Other tenants are untouched. Run it with qsrv
+// stopped: the broker loads the database only on start.
+//
+// A queue of the tenant that doesn't exist in the snapshot is deleted, as it
+// didn't exist at that moment.
+func RestoreTenant(dataDir, snapshotDir, tenant string) (RestoreResult, error) {
+	if !ValidTenant(tenant) {
+		return RestoreResult{}, fmt.Errorf("%w: invalid tenant %q", ErrInvalidConfig, tenant)
 	}
-	return filepath.Join(dataDir, tenantsDir, tenant, dbFile)
-}
-
-// tenantDirs lists the tenants that have a database under dataDir.
-func tenantDirs(dataDir string) ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(dataDir, tenantsDir))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+	src := filepath.Join(snapshotDir, dbFile)
+	if _, err := os.Stat(src); err != nil {
+		return RestoreResult{}, fmt.Errorf("snapshot: %w", err)
 	}
+	if err := checkSnapshotVersion(src); err != nil {
+		return RestoreResult{}, err
+	}
+	path := filepath.Join(dataDir, dbFile)
+	if _, err := os.Stat(path); err != nil {
+		return RestoreResult{}, fmt.Errorf("data dir: %w", err)
+	}
+	db, err := sql.Open(driverName, dsn(path, false, false))
 	if err != nil {
-		return nil, err
+		return RestoreResult{}, err
 	}
-	var out []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if !ValidTenant(e.Name()) {
-			slog.Warn("ignoring directory that is not a tenant name", "dir", filepath.Join(dataDir, tenantsDir, e.Name()))
-			continue
-		}
-		if _, err := os.Stat(storePath(dataDir, e.Name())); err == nil {
-			out = append(out, e.Name())
-		}
+	defer db.Close()
+	db.SetMaxOpenConns(1) // ATTACH is per connection
+	if err := initSchema(db); err != nil {
+		return RestoreResult{}, err
 	}
-	return out, nil
-}
+	if _, err := db.Exec(`ATTACH DATABASE ? AS snap`, src); err != nil {
+		return RestoreResult{}, err
+	}
+	defer db.Exec(`DETACH DATABASE snap`)
 
-func (b *Broker) openStore(tenant string) (*store, error) {
-	path := storePath(b.dataDir, tenant)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	st, err := openStore(path, b.opts.NoSync, b.opts.OnFatal)
+	lo, hi := tenantRange(tenant)
+	tx, err := db.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("open database of tenant %q: %w", tenant, err)
+		return RestoreResult{}, err
 	}
-	st.extraLatency = b.opts.SimulatedSyncLatency
-	st.onCommit = b.opts.Hooks.commit
-	return st, nil
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM main.messages WHERE queue >= ? AND queue < ?`,
+		`DELETE FROM main.queues WHERE name >= ? AND name < ?`,
+		`DELETE FROM main.topics WHERE name >= ? AND name < ?`,
+	} {
+		if _, err := tx.Exec(q, lo, hi); err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	var r RestoreResult
+	steps := []struct {
+		n   *int64
+		sql string
+	}{
+		{&r.Queues, `INSERT INTO main.queues(name, config, created_at)
+			SELECT name, config, created_at FROM snap.queues WHERE name >= ? AND name < ?`},
+		{&r.Topics, `INSERT INTO main.topics(name, queues, created_at)
+			SELECT name, queues, created_at FROM snap.topics WHERE name >= ? AND name < ?`},
+		{&r.Messages, `INSERT INTO main.messages(queue, id, seq, group_id, body, enqueued_at, attempts,
+				state, available_at, lease_id, deadline, done_at, moved_to, replay_of)
+			SELECT queue, id, seq, group_id, body, enqueued_at, attempts,
+				state, available_at, lease_id, deadline, done_at, moved_to, replay_of
+			FROM snap.messages WHERE queue >= ? AND queue < ? ORDER BY pk`},
+	}
+	for _, st := range steps {
+		res, err := tx.Exec(st.sql, lo, hi)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		*st.n, _ = res.RowsAffected()
+	}
+	return r, tx.Commit()
 }
 
-// storeFor returns the store of name's tenant, opening (and creating) it on
-// first use. Must not be called with persist or b.mu held: opening a
-// database takes milliseconds and only blocks other first uses.
-func (b *Broker) storeFor(name string) (*store, error) {
-	tenant, _ := SplitName(name)
-	b.storesMu.Lock()
-	defer b.storesMu.Unlock()
-	if b.closed {
-		return nil, ErrClosed
-	}
-	if st := b.stores[tenant]; st != nil {
-		return st, nil
-	}
-	st, err := b.openStore(tenant)
+func checkSnapshotVersion(path string) error {
+	db, err := sql.Open(driverName, dsn(path, true, false))
 	if err != nil {
-		return nil, err
+		return err
 	}
-	b.stores[tenant] = st
-	slog.Info("opened tenant database", "tenant", tenant, "path", storePath(b.dataDir, tenant))
-	return st, nil
-}
-
-// storeOf returns the store of an existing queue or topic's tenant.
-func (b *Broker) storeOf(name string) *store {
-	tenant, _ := SplitName(name)
-	b.storesMu.Lock()
-	defer b.storesMu.Unlock()
-	return b.stores[tenant]
-}
-
-func (b *Broker) allStores() []*store {
-	b.storesMu.Lock()
-	defer b.storesMu.Unlock()
-	out := make([]*store, 0, len(b.stores))
-	for _, st := range b.stores {
-		out = append(out, st)
+	defer db.Close()
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return fmt.Errorf("snapshot: %w", err)
 	}
-	return out
-}
-
-// StoreFiles lists the database file of every open tenant, sorted.
-func (b *Broker) StoreFiles() []StoreFile {
-	b.storesMu.Lock()
-	out := make([]StoreFile, 0, len(b.stores))
-	for t := range b.stores {
-		out = append(out, StoreFile{Tenant: t, Path: storePath(b.dataDir, t)})
+	if v != schemaVersion {
+		return fmt.Errorf("snapshot has schema version %d, this qsrv uses %d: restore it with the qsrv version that took it", v, schemaVersion)
 	}
-	b.storesMu.Unlock()
-	slices.SortFunc(out, func(x, y StoreFile) int { return strings.Compare(x.Tenant, y.Tenant) })
-	return out
+	return nil
 }

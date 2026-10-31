@@ -37,7 +37,7 @@ export QSRV_API_KEYS="acme:billing:$(openssl rand -hex 32)"   # tenant:name:key,
 | Flag / env | Default | |
 |---|---|---|
 | `-addr` / `QSRV_ADDR` | `:8080` | |
-| `-data-dir` / `QSRV_DATA_DIR` | `./data` | one SQLite database per tenant (`tenants/<tenant>/qsrv.db`); flock'd, one process per dir. See [Data directory](#data-directory) |
+| `-data-dir` / `QSRV_DATA_DIR` | `./data` | holds `qsrv.db` (every tenant) and the WASM compile cache; flock'd, one process per dir |
 | `-api-keys-file` / `QSRV_API_KEYS_FILE`, `QSRV_API_KEYS` | — | `tenant:name:key` entries; required unless `-insecure-no-auth`. See [API keys and tenants](#api-keys-and-tenants) |
 | `-tls-cert`, `-tls-key` | — | serve HTTPS directly; otherwise put TLS in front |
 | `-max-message-bytes` | 256KiB | |
@@ -86,12 +86,17 @@ subscription or a replay into another tenant). `-insecure-no-auth` makes
 every request an admin.
 
 There is no tenant to create: a tenant exists as soon as a key names it, and
-its queues appear when it creates them. Each tenant has **its own SQLite
-database** (and its own writer and fsyncs), created with its first queue or
-topic: a tenant's commits don't wait for another's, and a tenant's data is
-one file you can back up, move or delete. Tenants still share the process,
-CPU and disk bandwidth, and there are no per-tenant quotas: for hard
-isolation run one qsrv per tenant.
+its queues appear when it creates them. Isolation is of names and data,
+not of resources: all tenants share one SQLite database, so concurrent
+commits of every tenant share one transaction and one fsync. That is
+deliberate: one database per tenant was measured (100 tenants, 10KB
+messages) at ~1.6x the latency, twice the CPU and four times the memory,
+because each commit then carries one message and pays its own fsync.
+
+There are no per-tenant quotas. A tenant that needs hard isolation (its own
+SLA, a heavy load, compliance) gets a **dedicated qsrv** on its own disk or
+machine, configured with only that tenant's keys; its clients just use that
+URL. Normal tenants stay on the shared instance.
 
 **Rotation without restarts**: edit the keys file (or `QSRV_API_KEYS`) and
 send `SIGHUP` (`kill -HUP <pid>`, `docker kill -s HUP qsrv`). The new set
@@ -101,23 +106,6 @@ reload, move the clients, remove the old entry, reload.
 
 **Access logs** carry `tenant` and `key` (the name). Metrics label queues
 with their full name (`queue="acme/orders"`).
-
-## Data directory
-
-```
-data/
-  qsrv.db                    names without a tenant: unused by the server (only the Go library uses them)
-  tenants/acme/qsrv.db       one database per tenant, each with its -wal and -shm
-  tenants/globex/qsrv.db
-  .wasmcache/                compiled SQLite (WASM build), safe to delete
-```
-
-Every queue, topic, message and its history live in their tenant's
-database: dead letter queues, topics and replays never cross tenants, so
-every write is a transaction in exactly one database. On startup qsrv opens
-every `tenants/*/qsrv.db`; each open database costs about 1 MB of memory and
-6 file descriptors (100 tenants: ~100 MB, 600 fds; raise `ulimit -n` if
-needed).
 
 ## Disk full
 
@@ -152,7 +140,7 @@ docker run -d --name qsrv -p 8080:8080 \
   ghcr.io/romycode/qsrv:latest
 ```
 
-- **Data**: `/data` (volume). It holds the databases (see [Data directory](#data-directory)) and the compiled-SQLite cache;
+- **Data**: `/data` (volume). It holds `qsrv.db` and the compiled-SQLite cache;
   one container per volume.
 - **Config**: same flags as the binary (`docker run ... ghcr.io/romycode/qsrv -retention-check 5m`)
   or env vars. The image sets `QSRV_ADDR=:8080`, `QSRV_DATA_DIR=/data` and
@@ -175,14 +163,13 @@ The single-node weak point is the disk. qsrv takes snapshots itself:
 qsrv -data-dir /var/lib/qsrv -backup-dir /mnt/backup/qsrv -backup-every 1h -backup-keep 48
 ```
 
-- Every `-backup-every`, each tenant's database is copied with SQLite's
-  `VACUUM INTO`: a consistent, compacted copy, live and history included,
-  taken without blocking writes. Each tenant is consistent on its own (they
-  are copied one after another, and never reference each other).
-- A snapshot is `backup-dir/<UTC time>/`, with the data dir's layout and a
-  `manifest.json` (tenants, size, schema version). It is written under a
-  `.tmp-` name, fsynced and renamed when complete: a directory with a
-  timestamp name is always whole. The newest `-backup-keep` are kept.
+- Every `-backup-every`, the database is copied with SQLite's `VACUUM INTO`:
+  a consistent, compacted copy of every tenant, live messages and history,
+  taken from one read transaction without blocking writes.
+- A snapshot is `backup-dir/<UTC time>/qsrv.db` plus a `manifest.json`
+  (tenants, size, schema version). It is written under a `.tmp-` name,
+  fsynced and renamed when complete: a directory with a timestamp name is
+  always whole. The newest `-backup-keep` are kept.
 - **Put `-backup-dir` on another disk** (a second volume, NFS, a mounted
   bucket), or ship it off the machine (`rclone sync`, `aws s3 sync` from
   cron, which can ignore `.tmp-*`). A snapshot on the same disk does not
@@ -198,17 +185,22 @@ as after any crash).
 **Restore** (qsrv stopped):
 
 ```sh
-mv /var/lib/qsrv /var/lib/qsrv.broken                        # keep it, just in case
-cp -a /mnt/backup/qsrv/20261031T180000Z /var/lib/qsrv        # whole server
-# or one tenant: replace only tenants/acme/qsrv.db (and delete its -wal and -shm)
+# Whole server
+mv /var/lib/qsrv /var/lib/qsrv.broken                         # keep it, just in case
+mkdir /var/lib/qsrv && cp /mnt/backup/qsrv/20261031T180000Z/qsrv.db /var/lib/qsrv/
+
+# One tenant: its queues, topics, live messages and history go back to the
+# snapshot; every other tenant is untouched. One transaction.
+qsrv -data-dir /var/lib/qsrv -restore-tenant acme -from /mnt/backup/qsrv/20261031T180000Z
 ```
 
 Copy the snapshot: don't point `-data-dir` at the backup directory itself,
-qsrv would write into it.
+qsrv would write into it. A snapshot restores with the same qsrv schema
+version that took it (in `manifest.json`).
 
 For a smaller window than the snapshot interval,
-[Litestream](https://litestream.io) can replicate each database continuously
-(seconds of loss); new tenants have to be added to its config.
+[Litestream](https://litestream.io) can replicate `qsrv.db` continuously
+(seconds of loss).
 
 ## Metrics and alerts
 
@@ -227,7 +219,7 @@ Ready-to-use rules in `deploy/prometheus/alerts.yml` (thresholds marked `TUNE`).
 | `qsrv_store_pending_writes` | gauge | ops waiting for the disk |
 | `qsrv_http_requests_total{route,method,code}` | counter | route = ServeMux pattern (bounded cardinality) |
 | `qsrv_http_request_duration_seconds{route}` | histogram | receive includes long-poll wait |
-| `qsrv_disk_free_bytes`, `qsrv_disk_size_bytes`, `qsrv_db_size_bytes{tenant,file}` | gauge | capacity planning, WAL growth |
+| `qsrv_disk_free_bytes`, `qsrv_disk_size_bytes`, `qsrv_db_size_bytes{file}` | gauge | capacity planning, WAL growth |
 | `qsrv_storage_low` | gauge | 1 while sends are refused for lack of disk |
 | `qsrv_backup_last_success_timestamp_seconds`, `qsrv_backup_failures`, `qsrv_backup_last_duration_seconds`, `qsrv_backup_last_size_bytes` | gauge | snapshots (only with `-backup-dir`) |
 | `qsrv_queue_info`, `qsrv_queue_max_messages`, `qsrv_build_info`, `qsrv_start_time_seconds`, process/Go stats | gauge | context for alerts |

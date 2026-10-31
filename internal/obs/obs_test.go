@@ -85,7 +85,7 @@ func TestMetricsEndToEnd(t *testing.T) {
 		`qsrv_http_requests_total{route="POST /v1/queues/{name}/leases/{lease}/ack",method="POST",code="410"} 1`,
 		`qsrv_store_commit_duration_seconds_count`,
 		`qsrv_disk_free_bytes `,
-		`qsrv_db_size_bytes{tenant="",file="db"}`,
+		`qsrv_db_size_bytes{file="db"}`,
 		`qsrv_build_info{version="test"`,
 	} {
 		if !strings.Contains(out, want) {

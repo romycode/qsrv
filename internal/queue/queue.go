@@ -110,7 +110,7 @@ type Queue struct {
 	name string
 	cfg  Config
 	b    *Broker
-	st   *store // the store of the queue's tenant
+	st   *store // the broker's store (kept here: no lookup on the hot path)
 
 	mu       sync.Mutex
 	ready    *heapOf[*Message] // by seq

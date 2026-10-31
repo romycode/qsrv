@@ -34,7 +34,7 @@ func TestSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Name != "20261031T180000Z" || !slices.Equal(snap.Tenants, []string{"", "acme", "globex"}) || snap.Bytes == 0 {
+	if snap.Name != "20261031T180000Z" || !slices.Equal(snap.Tenants, []string{"acme", "globex"}) || snap.Bytes == 0 {
 		t.Fatalf("snapshot %+v", snap)
 	}
 	var m Snapshot
@@ -46,8 +46,14 @@ func TestSnapshots(t *testing.T) {
 		t.Fatalf("status %+v", st)
 	}
 
-	// Restoring is using the snapshot as a data dir.
-	r, err := Open(filepath.Join(bdir, snap.Name), Options{Clock: clk, JanitorEvery: time.Hour, OnFatal: func(err error) { panic(err) }})
+	// Restoring everything is copying qsrv.db into an empty data dir.
+	rdir := t.TempDir()
+	raw, err = os.ReadFile(filepath.Join(bdir, snap.Name, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(rdir, dbFile), raw, 0o644)
+	r, err := Open(rdir, Options{Clock: clk, JanitorEvery: time.Hour, OnFatal: func(err error) { panic(err) }})
 	if err != nil {
 		t.Fatal(err)
 	}
