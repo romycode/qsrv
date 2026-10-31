@@ -31,6 +31,10 @@ func IsLeaseGone(err error) bool { return hasCode(err, api.CodeLeaseGone) }
 func IsNotFound(err error) bool  { return hasCode(err, api.CodeNotFound) }
 func IsQueueFull(err error) bool { return hasCode(err, api.CodeQueueFull) }
 
+// IsStorageFull reports that the server is low on disk and refuses new
+// messages for now; receive and ack keep working. Retry later.
+func IsStorageFull(err error) bool { return hasCode(err, api.CodeStorageFull) }
+
 func hasCode(err error, code string) bool {
 	var e *APIError
 	return errors.As(err, &e) && e.Code == code

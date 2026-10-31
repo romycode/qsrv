@@ -150,3 +150,4 @@ default 1000, max 10000. Each page is atomic.
 | 422 | `invalid_config` | invalid settings or message; deleting a queue that is a DLQ or subscribed to a topic |
 | 429 | `queue_full` | `max_messages` reached: back off and retry |
 | 503 | `unavailable` | shutting down |
+| 503 | `storage_full` | server below its minimum free disk (`-min-free-disk`): sends, publishes, replays and new queues/topics are refused; receive, ack and nack still work. `Retry-After: 30` |

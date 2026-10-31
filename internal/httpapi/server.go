@@ -503,6 +503,9 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeAPIErr(w, http.StatusTooManyRequests, api.CodeQueueFull, err.Error())
 	case errors.Is(err, queue.ErrQueueClosed):
 		writeAPIErr(w, http.StatusServiceUnavailable, api.CodeUnavailable, err.Error())
+	case errors.Is(err, queue.ErrStorageFull):
+		w.Header().Set("Retry-After", "30")
+		writeAPIErr(w, http.StatusServiceUnavailable, api.CodeStorageFull, err.Error())
 	default:
 		slog.Error("unhandled error", "err", err)
 		writeAPIErr(w, http.StatusInternalServerError, api.CodeInternal, "internal error")

@@ -177,6 +177,7 @@ const (
 	CodeExists        = "already_exists"
 	CodeInvalidConfig = "invalid_config"
 	CodeQueueFull     = "queue_full"
+	CodeStorageFull   = "storage_full" // server low on disk: retry later
 	CodeUnavailable   = "unavailable"
 	CodeInternal      = "internal"
 )

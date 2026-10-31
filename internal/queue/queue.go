@@ -159,6 +159,9 @@ func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (M
 	if err := validateSend(groupID, delay); err != nil {
 		return Message{}, err
 	}
+	if err := q.b.checkDisk(); err != nil {
+		return Message{}, err
+	}
 	body = append([]byte(nil), body...)
 
 	q.b.persist.RLock()

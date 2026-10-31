@@ -44,6 +44,10 @@ go test -run '^$' -bench 'Send|HTTP' -count 6 ./... > new.txt && benchstat old.t
   (`data-dir/tenants/<tenant>/qsrv.db`, see `internal/queue/stores.go`). One table
   for queues, one for messages (live + history), indexed by `(queue, id)`,
   `(queue, seq)` and `(queue, state, done_at)`.
+- Each database records its schema version in `PRAGMA user_version`
+  (`schemaVersion` in `store.go`). A schema change bumps it and adds the
+  upgrade step to `migrations`, applied when the database is opened; a
+  database from a newer qsrv is refused.
 - Live message **metadata** is kept in memory (heaps for ready/delayed,
   lease expiries, ordering groups); bodies are read from SQLite on delivery.
   Memory is ~200 bytes per live message regardless of body size.

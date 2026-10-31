@@ -10,6 +10,7 @@ use Romycode\Qsrv\Exception\ApiException;
 use Romycode\Qsrv\Exception\LeaseGoneException;
 use Romycode\Qsrv\Exception\NotFoundException;
 use Romycode\Qsrv\Exception\QueueFullException;
+use Romycode\Qsrv\Exception\StorageFullException;
 use Romycode\Qsrv\Exception\TransportException;
 use Romycode\Qsrv\Model\QueueConfig;
 use Romycode\Qsrv\Model\RetryPolicy;
@@ -129,6 +130,7 @@ final class ClientTest extends TestCase
         yield 'lease gone' => [410, 'lease_gone', LeaseGoneException::class];
         yield 'not found' => [404, 'not_found', NotFoundException::class];
         yield 'queue full' => [429, 'queue_full', QueueFullException::class];
+        yield 'storage full' => [503, 'storage_full', StorageFullException::class];
         yield 'other' => [422, 'invalid_config', ApiException::class];
     }
 

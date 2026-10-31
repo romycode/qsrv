@@ -63,6 +63,45 @@ CREATE TABLE IF NOT EXISTS topics (
 );
 `
 
+// schemaVersion is stored in PRAGMA user_version. Bump it with every schema
+// change and add the step that upgrades from the previous version to
+// migrations; databases are upgraded when opened.
+const schemaVersion = 1
+
+// migrations[v] upgrades a database from version v to v+1 (v >= 1), inside
+// the same transaction as the version bump.
+var migrations = map[int]func(*sql.Tx) error{}
+
+func initSchema(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	if v > schemaVersion {
+		return fmt.Errorf("database schema version %d is newer than this qsrv supports (%d): run a newer qsrv", v, schemaVersion)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if v == 0 { // new database (or written before versions: same schema as 1)
+		if _, err := tx.Exec(schema); err != nil {
+			return fmt.Errorf("init schema: %w", err)
+		}
+		v = 1
+	}
+	for ; v < schemaVersion; v++ {
+		if err := migrations[v](tx); err != nil {
+			return fmt.Errorf("migrate schema %d -> %d: %w", v, v+1, err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // msgRecord is the persisted view of a live message.
 type msgRecord struct {
 	ID          string
@@ -138,9 +177,9 @@ func openStore(path string, noSync bool, onFatal func(error)) (*store, error) {
 	w.SetMaxOpenConns(1) // SQLite has one writer anyway; avoids SQLITE_BUSY between our own conns
 	w.SetMaxIdleConns(1)
 	w.SetConnMaxLifetime(0)
-	if _, err := w.Exec(schema); err != nil {
+	if err := initSchema(w); err != nil {
 		w.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	r, err := sql.Open(driverName, dsn(path, true, noSync))
 	if err != nil {

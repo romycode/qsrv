@@ -140,6 +140,42 @@ func (o *Obs) RegisterBroker(b *queue.Broker, dataDir, version string) {
 			}
 		}
 	})
+	o.Reg.Gauge("qsrv_backup_last_success_timestamp_seconds", "Unix time of the last complete snapshot (0 = none yet; absent when snapshots are off).", func(emit func(float64, ...metrics.Label)) {
+		if st := b.BackupStatus(); st.Enabled {
+			v := 0.0
+			if !st.LastSuccess.IsZero() {
+				v = float64(st.LastSuccess.Unix())
+			}
+			emit(v)
+		}
+	})
+	o.Reg.Gauge("qsrv_backup_interval_seconds", "Configured interval between snapshots.", func(emit func(float64, ...metrics.Label)) {
+		if st := b.BackupStatus(); st.Enabled {
+			emit(st.Every.Seconds())
+		}
+	})
+	o.Reg.Gauge("qsrv_backup_last_duration_seconds", "How long the last complete snapshot took.", func(emit func(float64, ...metrics.Label)) {
+		if st := b.BackupStatus(); st.Enabled && !st.LastSuccess.IsZero() {
+			emit(st.LastTook.Seconds())
+		}
+	})
+	o.Reg.Gauge("qsrv_backup_last_size_bytes", "Size of the last complete snapshot.", func(emit func(float64, ...metrics.Label)) {
+		if st := b.BackupStatus(); st.Enabled && !st.LastSuccess.IsZero() {
+			emit(float64(st.LastBytes))
+		}
+	})
+	o.Reg.Gauge("qsrv_backup_failures", "Snapshots that failed since qsrv started.", func(emit func(float64, ...metrics.Label)) {
+		if st := b.BackupStatus(); st.Enabled {
+			emit(float64(st.Failures))
+		}
+	})
+	o.Reg.Gauge("qsrv_storage_low", "1 while free disk is below -min-free-disk and sends are refused (503 storage_full).", func(emit func(float64, ...metrics.Label)) {
+		v := 0.0
+		if b.StorageLow() {
+			v = 1
+		}
+		emit(v)
+	})
 	o.Reg.Gauge("qsrv_disk_free_bytes", "Free bytes on the data-dir filesystem (available to the process).", func(emit func(float64, ...metrics.Label)) {
 		if free, _, err := diskUsage(dataDir); err == nil {
 			emit(float64(free))

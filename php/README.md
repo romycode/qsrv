@@ -59,7 +59,8 @@ seconds (floats). Bodies are arbitrary bytes.
 
 Errors: `ApiException` (HTTP status + API code) with subclasses
 `NotFoundException`, `LeaseGoneException`, `QueueExistsException`,
-`QueueFullException`, `UnauthorizedException`; `TransportException` when the
+`QueueFullException`, `StorageFullException` (server low on disk: retry
+later), `UnauthorizedException`; `TransportException` when the
 server can't be reached. All implement `Romycode\Qsrv\Exception\QsrvException`.
 
 qsrv is multitenant: use an API key of your tenant and plain queue names

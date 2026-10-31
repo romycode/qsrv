@@ -311,3 +311,32 @@ func TestNackDeadLetter(t *testing.T) {
 		t.Fatalf("plain nack: %+v", again)
 	}
 }
+
+func TestStorageFull(t *testing.T) {
+	auth, err := httpapi.NewAuthenticator([]httpapi.KeyEntry{entry("test", "suite", key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := queue.Open(t.TempDir(), queue.Options{NoSync: true, MinFreeDisk: 1,
+		FreeDisk: func(string) (uint64, error) { return 0, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(httpapi.New(b, httpapi.Options{Auth: auth}))
+	defer func() { srv.Close(); b.Close() }()
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/v1/queues/q", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") != "30" {
+		t.Fatalf("status %d, Retry-After %q", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+	_, err = client.New(srv.URL, key).CreateQueue(context.Background(), "q", api.QueueConfig{})
+	if !client.IsStorageFull(err) {
+		t.Fatalf("client: %v", err)
+	}
+}

@@ -33,6 +33,10 @@ export QSRV_API_KEYS="acme:billing:$(openssl rand -hex 32)"   # tenant:name:key,
 | `-tls-cert`, `-tls-key` | — | serve HTTPS directly; otherwise put TLS in front |
 | `-max-message-bytes` | 256KiB | |
 | `-retention-check` | 1m | janitor interval |
+| `-backup-dir` / `QSRV_BACKUP_DIR` | — | snapshots of every tenant here; see [Backups](#backups) |
+| `-backup-every` / `QSRV_BACKUP_EVERY` | 1h | snapshot interval |
+| `-backup-keep` | 24 | snapshots kept |
+| `-min-free-disk` / `QSRV_MIN_FREE_DISK` | 1GiB | below this free space, refuse new data with `503 storage_full`. See [Disk full](#disk-full); `0` disables |
 | `-metrics-addr` / `QSRV_METRICS_ADDR` | `127.0.0.1:9464` | Prometheus `/metrics`, no auth; empty disables |
 | `-log-level` / `QSRV_LOG_LEVEL` | info | JSON logs to stderr |
 
@@ -106,6 +110,20 @@ every `tenants/*/qsrv.db`; each open database costs about 1 MB of memory and
 6 file descriptors (100 tenants: ~100 MB, 600 fds; raise `ulimit -n` if
 needed).
 
+## Disk full
+
+A commit that fails (no space left) makes qsrv exit, because memory would
+be ahead of disk; restarting into a full disk would fail the same way. To
+never get there, below `-min-free-disk` (default 1GiB) qsrv refuses what
+adds data, with `503 storage_full` and `Retry-After: 30`: sends, publishes,
+replays and creating queues or topics. Receive, ack, nack, extend, deletes
+and the retention purge keep working, so consumers drain the backlog. Writes
+are accepted again within 2 seconds of the space coming back.
+
+`qsrv_storage_low` is 1 while it lasts, and the `QsrvStorageFull` alert
+fires. Size the threshold above what a few minutes of traffic writes, and
+keep snapshots on another disk (see [Backups](#backups)).
+
 ## Docker
 
 Multi-arch image (`linux/amd64`, `linux/arm64`) on GitHub Container Registry,
@@ -141,22 +159,46 @@ Compose file with a volume and private metrics: [deploy/docker-compose.yml](../d
 
 ## Backups
 
-The single-node weak point is the disk. Options, from least to most effort:
+The single-node weak point is the disk. qsrv takes snapshots itself:
 
-- `VACUUM INTO` every database from cron (hot, consistent per tenant):
+```sh
+qsrv -data-dir /var/lib/qsrv -backup-dir /mnt/backup/qsrv -backup-every 1h -backup-keep 48
+```
 
-  ```sh
-  cd data && for db in qsrv.db tenants/*/qsrv.db; do
-    mkdir -p "/backup/$(date +%F)/$(dirname "$db")"
-    sqlite3 "$db" "VACUUM INTO '/backup/$(date +%F)/$db'"
-  done
-  ```
+- Every `-backup-every`, each tenant's database is copied with SQLite's
+  `VACUUM INTO`: a consistent, compacted copy, live and history included,
+  taken without blocking writes. Each tenant is consistent on its own (they
+  are copied one after another, and never reference each other).
+- A snapshot is `backup-dir/<UTC time>/`, with the data dir's layout and a
+  `manifest.json` (tenants, size, schema version). It is written under a
+  `.tmp-` name, fsynced and renamed when complete: a directory with a
+  timestamp name is always whole. The newest `-backup-keep` are kept.
+- **Put `-backup-dir` on another disk** (a second volume, NFS, a mounted
+  bucket), or ship it off the machine (`rclone sync`, `aws s3 sync` from
+  cron, which can ignore `.tmp-*`). A snapshot on the same disk does not
+  survive losing that disk.
+- `qsrv_backup_last_success_timestamp_seconds`, `qsrv_backup_failures` and
+  the `QsrvBackupStale` alert tell you when they stop.
 
-  To restore, stop qsrv and put the files back in the same layout. A single
-  tenant can be restored alone.
-- [Litestream](https://litestream.io) continuously replicating every database to
-  S3/R2/GCS: point-in-time restore with seconds of RPO, no code changes
-  (the database already runs in WAL mode).
+What a snapshot can lose: everything after it. With `-backup-every 1h`, up
+to an hour of messages. Messages delivered or acked after the snapshot come
+back as they were at that moment, so consumers see some again (at-least-once,
+as after any crash).
+
+**Restore** (qsrv stopped):
+
+```sh
+mv /var/lib/qsrv /var/lib/qsrv.broken                        # keep it, just in case
+cp -a /mnt/backup/qsrv/20261031T180000Z /var/lib/qsrv        # whole server
+# or one tenant: replace only tenants/acme/qsrv.db (and delete its -wal and -shm)
+```
+
+Copy the snapshot: don't point `-data-dir` at the backup directory itself,
+qsrv would write into it.
+
+For a smaller window than the snapshot interval,
+[Litestream](https://litestream.io) can replicate each database continuously
+(seconds of loss); new tenants have to be added to its config.
 
 ## Metrics and alerts
 
@@ -176,6 +218,8 @@ Ready-to-use rules in `deploy/prometheus/alerts.yml` (thresholds marked `TUNE`).
 | `qsrv_http_requests_total{route,method,code}` | counter | route = ServeMux pattern (bounded cardinality) |
 | `qsrv_http_request_duration_seconds{route}` | histogram | receive includes long-poll wait |
 | `qsrv_disk_free_bytes`, `qsrv_disk_size_bytes`, `qsrv_db_size_bytes{tenant,file}` | gauge | capacity planning, WAL growth |
+| `qsrv_storage_low` | gauge | 1 while sends are refused for lack of disk |
+| `qsrv_backup_last_success_timestamp_seconds`, `qsrv_backup_failures`, `qsrv_backup_last_duration_seconds`, `qsrv_backup_last_size_bytes` | gauge | snapshots (only with `-backup-dir`) |
 | `qsrv_queue_info`, `qsrv_queue_max_messages`, `qsrv_build_info`, `qsrv_start_time_seconds`, process/Go stats | gauge | context for alerts |
 
 Alerts included: down, restart loop, 5xx ratio, messages too old (warning /

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +41,10 @@ func run() error {
 		tlsCert     = flag.String("tls-cert", os.Getenv("QSRV_TLS_CERT"), "TLS certificate (PEM)")
 		tlsKey      = flag.String("tls-key", os.Getenv("QSRV_TLS_KEY"), "TLS private key (PEM)")
 		maxMsg      = flag.Int64("max-message-bytes", 256<<10, "max message size")
+		backupDir   = flag.String("backup-dir", os.Getenv("QSRV_BACKUP_DIR"), "take periodic snapshots of every tenant's database into this directory (empty disables; use another disk)")
+		backupEvery = flag.Duration("backup-every", durationEnv("QSRV_BACKUP_EVERY", time.Hour), "interval between snapshots")
+		backupKeep  = flag.Int("backup-keep", 24, "snapshots to keep (oldest are deleted)")
+		minFree     = flag.String("min-free-disk", envOr("QSRV_MIN_FREE_DISK", "1GiB"), "below this free space on the data dir, refuse sends with 503 storage_full (e.g. 500MiB, 2GiB; 0 disables)")
 		janitor     = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
 		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
 		metricsAddr = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
@@ -71,6 +76,11 @@ func run() error {
 		return errors.New("-tls-cert and -tls-key must be set together")
 	}
 
+	minFreeBytes, err := parseBytes(*minFree)
+	if err != nil {
+		return fmt.Errorf("-min-free-disk: %w", err)
+	}
+
 	lock, err := lockDir(*dataDir)
 	if err != nil {
 		return err
@@ -78,7 +88,10 @@ func run() error {
 	defer lock.Close()
 
 	o := obs.New()
-	broker, err := queue.Open(*dataDir, queue.Options{JanitorEvery: *janitor, SimulatedSyncLatency: *simLatency, Hooks: o.Hooks()})
+	broker, err := queue.Open(*dataDir, queue.Options{
+		JanitorEvery: *janitor, SimulatedSyncLatency: *simLatency, Hooks: o.Hooks(), MinFreeDisk: minFreeBytes,
+		Backup: queue.BackupOptions{Dir: *backupDir, Every: *backupEvery, Keep: *backupKeep},
+	})
 	if err != nil {
 		return err
 	}
@@ -218,6 +231,37 @@ func tenantCount(keys []httpapi.KeyEntry) int {
 		t[k.Tenant] = true
 	}
 	return len(t)
+}
+
+// parseBytes parses sizes like "1GiB", "500MiB", "64KiB", "1GB" or plain bytes.
+func parseBytes(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	units := []struct {
+		suffix string
+		mult   uint64
+	}{{"TiB", 1 << 40}, {"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}, {"TB", 1e12}, {"GB", 1e9}, {"MB", 1e6}, {"KB", 1e3}, {"B", 1}}
+	mult := uint64(1)
+	for _, u := range units {
+		if strings.HasSuffix(s, u.suffix) {
+			s, mult = strings.TrimSpace(strings.TrimSuffix(s, u.suffix)), u.mult
+			break
+		}
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid size %q (use e.g. 500MiB, 2GiB or bytes)", s)
+	}
+	return uint64(n * float64(mult)), nil
+}
+
+func durationEnv(k string, def time.Duration) time.Duration {
+	if v := os.Getenv(k); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		slog.Warn("ignoring invalid duration", "env", k, "value", v)
+	}
+	return def
 }
 
 func envOr(k, def string) string {
