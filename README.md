@@ -22,6 +22,19 @@ through cgo for less CPU.
 
 ```sh
 git clone https://github.com/romycode/qsrv && cd qsrv
+make setup   # asks how to run it (binary, Docker, or with Prometheus + Grafana),
+             # ports, storage, backups and tenants, and generates the API keys
+make up      # starts it; make status, make logs, make keys, make down
+```
+
+`make help` lists the rest (`add-key`, `restart`, `build`, `test`, ...).
+The answers live in `.qsrv/` (git-ignored); run `make setup` again to change
+them.
+
+By hand instead:
+
+```sh
+git clone https://github.com/romycode/qsrv && cd qsrv
 CGO_ENABLED=0 go build -o bin/ ./cmd/...                 # qsrv, qctl, qbench (Go 1.27+)
 export PATH=$PWD/bin:$PATH
 

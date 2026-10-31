@@ -5,6 +5,15 @@ sizing.
 
 ## Run
 
+The quickest way: `make setup` asks everything below (how to run qsrv,
+address, TLS, metrics, admin UI, data and snapshot directories, free-disk
+threshold, tenants) and generates the API keys into `.qsrv/`; `make up`
+starts it in the chosen mode: the binary in the background, one Docker
+container, or `deploy/monitoring` with Prometheus and Grafana. `make status`,
+`make logs`, `make down`; `make add-key TENANT=acme NAME=billing` adds a key
+and reloads the keys of the running qsrv, no restart. The rest of this page is
+what those choices do.
+
 Requires Go 1.27+. Pure Go by default: SQLite runs as WASM inside the wazero runtime
 (`ncruces/go-sqlite3`), so builds are static and cross-compile anywhere.
 The first start compiles SQLite to native code (~1-1.5s) and caches it in
@@ -44,7 +53,7 @@ export QSRV_API_KEYS="acme:billing:$(openssl rand -hex 32)"   # tenant:name:key,
 | `-retention-check` | 1m | janitor interval |
 | `-backup-dir` / `QSRV_BACKUP_DIR` | — | snapshots of every tenant here; see [Backups](#backups) |
 | `-backup-every` / `QSRV_BACKUP_EVERY` | 1h | snapshot interval |
-| `-backup-keep` | 24 | snapshots kept |
+| `-backup-keep` / `QSRV_BACKUP_KEEP` | 24 | snapshots kept |
 | `-admin` / `QSRV_ADMIN` | `true` | read-only admin UI at `/admin/` on the API address; `false` turns it off. See [Admin UI](#admin-ui) |
 | `-min-free-disk` / `QSRV_MIN_FREE_DISK` | 1GiB | below this free space, refuse new data with `503 storage_full`. See [Disk full](#disk-full); `0` disables |
 | `-metrics-addr` / `QSRV_METRICS_ADDR` | `127.0.0.1:9464` | Prometheus `/metrics`, no auth; empty disables |

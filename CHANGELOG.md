@@ -23,6 +23,11 @@ API or the data format (always called out here).
   Alertmanager and Grafana in one compose file.
 - `qsrv_queue_messages{state="waiting"}`: messages behind the head of their
   ordering group. The four states now add up to the queue's messages.
+- `make setup` asks what qsrv needs (binary, Docker or with the monitoring
+  stack; network, TLS, storage, snapshots, tenants) and generates the API
+  keys; `make up`, `down`, `status`, `logs`, `keys`, `add-key` (live,
+  without a restart). `make help` for the rest.
+- `QSRV_BACKUP_KEEP` environment variable for `-backup-keep`.
 - The Docker image has a `/backup` directory owned by its user: a volume
   mounted there for `-backup-dir` is writable without a `chown`.
 
