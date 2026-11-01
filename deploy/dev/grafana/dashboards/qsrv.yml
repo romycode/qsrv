@@ -1,0 +1,10 @@
+# Development: the qsrv dashboards from the repo, reloaded every 5 seconds.
+apiVersion: 1
+providers:
+  - name: qsrv
+    folder: qsrv
+    type: file
+    allowUiUpdates: true # UI edits last until the files change: export to generate.py to keep them
+    updateIntervalSeconds: 5
+    options:
+      path: /var/lib/grafana/dashboards/qsrv

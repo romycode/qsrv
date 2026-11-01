@@ -1,0 +1,88 @@
+# Development stack: qsrv built from this checkout, Prometheus with the alert
+# rules, Grafana with the dashboards (no login), and qdevload generating
+# traffic in two tenants so every panel has data. From the repository root:
+#   make dev            # build and start (make dev-down to stop)
+# Grafana http://localhost:3000 · Prometheus http://localhost:9090
+# qsrv API http://localhost:8080 · admin UI http://localhost:8080/admin/
+# The API keys below are fixed and public: development only.
+name: qsrv-dev
+
+x-keys:
+  admin: &admin-key dev-admin-0123456789abcdef0123456789abcdef
+
+services:
+  qsrv:
+    build:
+      context: ../..
+      args:
+        VERSION: dev
+    image: qsrv:dev
+    environment:
+      QSRV_API_KEYS: >-
+        *:dev:dev-admin-0123456789abcdef0123456789abcdef,
+        acme:app:dev-acme-0123456789abcdef0123456789abcdef,
+        globex:app:dev-globex-0123456789abcdef0123456789abcdef
+      QSRV_LOG_LEVEL: ${QSRV_LOG_LEVEL:-info}
+      QSRV_BACKUP_DIR: /backup
+      QSRV_BACKUP_EVERY: 5m # so the snapshot panels have data
+      QSRV_BACKUP_KEEP: 3
+      QSRV_MIN_FREE_DISK: 100MiB
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - qsrv-data:/data
+      - qsrv-backup:/backup
+    stop_grace_period: 30s
+
+  qdevload:
+    profiles: [load] # make dev starts it; make dev LOAD=0 doesn't
+    build:
+      context: ../..
+      dockerfile: deploy/dev/qdevload.Dockerfile
+    image: qsrv-qdevload:dev
+    environment:
+      QSRV_ADDR: http://qsrv:8080
+      QSRV_API_KEY: *admin-key
+      QDEVLOAD_RATE: ${QDEVLOAD_RATE:-5}
+    depends_on:
+      qsrv:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle # curl -X POST localhost:9090/-/reload after editing alerts.yml
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:13.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/qsrv/qsrv-overview.json
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 5s
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana:/etc/grafana/provisioning:ro
+      # The dashboards straight from the repo: regenerate them with
+      # deploy/grafana/generate.py and Grafana reloads them within seconds.
+      - ../grafana/dashboards:/var/lib/grafana/dashboards/qsrv:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  qsrv-data:
+  qsrv-backup:
+  prometheus-data:
+  grafana-data:

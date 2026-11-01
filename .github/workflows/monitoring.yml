@@ -11,6 +11,8 @@ on:
       - "deploy/prometheus/**"
       - "deploy/grafana/**"
       - "deploy/monitoring/**"
+      - "deploy/dev/**"
+      - "cmd/qdevload/**"
       - "internal/obs/**"
       - "Dockerfile"
       - ".github/ci/monitoring/**"
@@ -21,6 +23,8 @@ on:
       - "deploy/prometheus/**"
       - "deploy/grafana/**"
       - "deploy/monitoring/**"
+      - "deploy/dev/**"
+      - "cmd/qdevload/**"
       - "internal/obs/**"
       - "Dockerfile"
       - ".github/ci/monitoring/**"
@@ -61,6 +65,13 @@ jobs:
             --entrypoint promtool "$PROMETHEUS" check config /etc/prometheus/prometheus.yml
           docker run --rm -v "$PWD/deploy/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
             --entrypoint amtool "$ALERTMANAGER" check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Development stack config
+        run: |
+          docker run --rm -v "$PWD/deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            -v "$PWD/deploy/dev/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            --entrypoint promtool "$PROMETHEUS" check config /etc/prometheus/prometheus.yml
+          docker compose -f deploy/dev/docker-compose.yml --profile load config -q
 
       - uses: actions/setup-go@v7
         with:

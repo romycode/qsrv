@@ -18,6 +18,51 @@ PHP: see [php/README.md](../php/README.md#tests).
 `examples/` is documentation: CI doesn't run it. Run it by hand against a
 local qsrv when you change it (each file says how).
 
+## Development stack
+
+`make dev` builds qsrv from your checkout and starts it with Prometheus
+(scraping every 5s, with the alert rules) and Grafana (dashboards
+provisioned, no login), plus `qdevload`, which keeps realistic traffic going
+so every panel has data:
+
+| tenant `acme` and `globex` | |
+|---|---|
+| `orders` | ordering groups (20 customers), 3 attempts, DLQ `orders-dlq`; 2 consumers: 90% ack, 7% nack, 1.5% straight to the DLQ, 1.5% abandoned (lease expires) |
+| `orders-dlq` | no consumer: dead letters pile up |
+| `emails` | 10% sent with a 5-60s delay |
+| topic `events` | fans out to `billing` and `audit`; the `audit` consumer stops 3 minutes every 15, so a backlog grows and drains |
+
+The send rate varies ±50% over 10 minutes around `QDEVLOAD_RATE`
+(default 5 msg/s per tenant).
+
+```sh
+make dev                       # build and start; prints the URLs
+make dev QDEVLOAD_RATE=50      # more traffic
+make dev LOAD=0                # without the generator
+make dev                       # again after changing Go code: rebuilds qsrv
+make dev-logs S=qsrv           # logs of one service
+make dev-down                  # stop, keep data · make dev-reset: delete it too
+```
+
+| | |
+|---|---|
+| Grafana | http://localhost:3000 |
+| Prometheus | http://localhost:9090 (alerts at `/alerts`) |
+| qsrv | http://localhost:8080, admin UI at `/admin/` |
+
+API keys (fixed, development only): admin
+`dev-admin-0123456789abcdef0123456789abcdef`, tenants
+`dev-acme-0123456789abcdef0123456789abcdef` and
+`dev-globex-0123456789abcdef0123456789abcdef`.
+
+Working on the dashboards: edit `deploy/grafana/generate.py`, run
+`make dashboards`, and Grafana reloads them within 5 seconds (they are
+mounted from the repo). Working on the alerts: edit
+`deploy/prometheus/alerts.yml`, then `curl -X POST localhost:9090/-/reload`.
+
+The stack lives in `deploy/dev/`; `deploy/monitoring/` is the one for
+running qsrv for real.
+
 ## Benchmarks
 
 Go benchmarks (in-process, real fsync) live in `internal/queue/perf_bench_test.go`
