@@ -93,6 +93,30 @@ bench: ## Go benchmarks
 dashboards: ## Regenerate the Grafana dashboards from deploy/grafana/generate.py
 	python3 deploy/grafana/generate.py deploy/grafana/dashboards
 
+##@ Development stack (qsrv from this checkout + Prometheus + Grafana + traffic)
+
+DEV := docker compose -f deploy/dev/docker-compose.yml
+
+.PHONY: dev
+dev: ## Build and start it; LOAD=0 without traffic, QDEVLOAD_RATE=20 for more
+	COMPOSE_PROFILES=$(if $(filter 0,$(LOAD)),,load) $(DEV) up -d --build --wait
+	@echo
+	@echo "  Grafana     http://localhost:3000   (no login)"
+	@echo "  Prometheus  http://localhost:9090"
+	@echo "  qsrv        http://localhost:8080   admin UI /admin/, key dev-admin-0123456789abcdef0123456789abcdef"
+
+.PHONY: dev-down
+dev-down: ## Stop it (data kept)
+	$(DEV) --profile load down
+
+.PHONY: dev-reset
+dev-reset: ## Stop it and delete its data (queues, metrics, Grafana)
+	$(DEV) --profile load down -v
+
+.PHONY: dev-logs
+dev-logs: ## Follow the logs (make dev-logs S=qsrv for one service)
+	$(DEV) --profile load logs -f $(S)
+
 .PHONY: clean
 clean: ## Remove bin/ (keeps .qsrv/ and data)
 	rm -rf bin
