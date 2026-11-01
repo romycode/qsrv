@@ -143,9 +143,14 @@ func cmdCreate(ctx context.Context, c *client.Client, args []string) error {
 	dlq := fs.String("dlq", "", "dead letter queue (must exist)")
 	ordering := fs.String("ordering", "available", "available | strict")
 	maxMsgs := fs.Int("max-messages", 0, "queue depth limit (0 = unlimited)")
-	retention := fs.Duration("retention", 90*24*time.Hour, "keep processed messages for replay this long (0 = forever)")
+	retention := fs.Duration("retention", 0, "expire (delete unprocessed) messages that wait longer than this (default: server default, 14 days)")
+	persistent := fs.Bool("persistent", false, "never expire messages and keep processed ones as history for replay")
 	fs.Parse(args)
-	ret := api.Duration(*retention)
+	var ret *api.Duration
+	if *retention != 0 {
+		r := api.Duration(*retention)
+		ret = &r
+	}
 	if fs.NArg() != 1 {
 		return errors.New("usage: qctl create [flags] NAME")
 	}
@@ -160,7 +165,8 @@ func cmdCreate(ctx context.Context, c *client.Client, args []string) error {
 		DeadLetterQueue: *dlq,
 		Ordering:        *ordering,
 		MaxMessages:     *maxMsgs,
-		Retention:       &ret,
+		Retention:       ret,
+		Persistent:      *persistent,
 	})
 	if err != nil {
 		return err

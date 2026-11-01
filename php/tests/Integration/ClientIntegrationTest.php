@@ -20,7 +20,7 @@ final class ClientIntegrationTest extends IntegrationTestCase
     {
         $q = $this->queueName();
         self::assertTrue($this->client->healthy());
-        $created = $this->client->createQueue($q, new QueueConfig(visibilityTimeout: 30, retention: 0));
+        $created = $this->client->createQueue($q, new QueueConfig(visibilityTimeout: 30, retention: 3600));
         self::assertSame(30.0, $created->config->visibilityTimeout);
         self::assertContains($q, $this->client->listQueues());
 
@@ -128,7 +128,7 @@ final class ClientIntegrationTest extends IntegrationTestCase
     {
         $src = $this->queueName();
         $dst = $this->queueName();
-        $this->client->createQueue($src, new QueueConfig(retention: 0));
+        $this->client->createQueue($src, new QueueConfig(persistent: true));
         $this->client->createQueue($dst);
         foreach (['1', '2', '3'] as $b) {
             $this->client->send($src, $b);

@@ -170,22 +170,32 @@ final class ClientTest extends TestCase
 
     public function testCreateQueueSendsConfig(): void
     {
-        $c = $this->client([new JsonMockResponse(['name' => 'q', 'visibility_timeout' => '30s', 'retention' => '0s', 'stats' => ['messages' => 0]], ['http_code' => 201])]);
+        $c = $this->client([new JsonMockResponse(['name' => 'q', 'visibility_timeout' => '30s', 'retention' => '1h0m0s', 'stats' => ['messages' => 0]], ['http_code' => 201])]);
         $q = $c->createQueue('q', new QueueConfig(
             visibilityTimeout: 30,
             retry: new RetryPolicy(maxAttempts: 5, initialBackoff: 1, maxBackoff: 60, multiplier: 2),
             deadLetterQueue: 'dlq',
-            retention: 0,
+            retention: 3600,
         ));
         self::assertSame('PUT', $this->requests[0]['method']);
         self::assertSame([
             'visibility_timeout' => '30000ms',
             'retry' => ['max_attempts' => 5, 'initial_backoff' => '1000ms', 'max_backoff' => '60000ms', 'multiplier' => 2.0],
             'dead_letter_queue' => 'dlq',
-            'retention' => '0ms',
+            'retention' => '3600000ms',
         ], $this->sentJson());
         self::assertSame(30.0, $q->config->visibilityTimeout);
-        self::assertSame(0.0, $q->config->retention);
+        self::assertSame(3600.0, $q->config->retention);
+        self::assertNull($q->config->persistent);
+    }
+
+    public function testCreatePersistentQueue(): void
+    {
+        $c = $this->client([new JsonMockResponse(['name' => 'q', 'persistent' => true, 'stats' => []], ['http_code' => 201])]);
+        $q = $c->createQueue('q', new QueueConfig(persistent: true));
+        self::assertSame(['persistent' => true], $this->sentJson());
+        self::assertTrue($q->config->persistent);
+        self::assertNull($q->config->retention);
     }
 
     public function testCreateQueueWithDefaultsSendsEmptyObject(): void

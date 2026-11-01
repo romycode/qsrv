@@ -49,11 +49,27 @@ const (
 type Config struct {
 	VisibilityTimeout time.Duration
 	Retry             RetryPolicy
-	DeadLetterQueue   string // empty = exhausted messages are dropped (kept as history)
+	DeadLetterQueue   string // empty = exhausted messages are dropped
 	Ordering          Ordering
-	MaxMessages       int           // 0 = unlimited; counts live messages only
-	Retention         time.Duration // how long processed messages are kept for replay; 0 = forever
+	MaxMessages       int // 0 = unlimited; counts live messages only
+	// Retention is how long a message may wait in the queue (since it was
+	// enqueued) before it expires and is deleted unprocessed. 0 = the
+	// default (DefaultRetention). Ignored by persistent queues.
+	Retention time.Duration
+	// Persistent queues never expire messages and keep every processed one
+	// (acked, dropped, dead-lettered) as history, for replay, until the queue
+	// is deleted. Other queues delete a message when it is processed.
+	Persistent bool
 }
+
+// DefaultRetention is the retention of a non-persistent queue that sets none.
+const DefaultRetention = 14 * 24 * time.Hour
+
+// MinRetention is the shortest retention a queue may have.
+const MinRetention = time.Minute
+
+// keepsHistory reports whether processed messages stay in the database.
+func (c Config) keepsHistory() bool { return c.Persistent }
 
 // Message is the public view. Live messages keep only metadata in memory;
 // the body lives in SQLite and is attached on delivery.
@@ -158,6 +174,9 @@ func (q *Queue) Send(body []byte, groupID string) (Message, error) {
 func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (Message, error) {
 	if err := validateSend(groupID, delay); err != nil {
 		return Message{}, err
+	}
+	if !q.cfg.Persistent && delay >= q.cfg.Retention {
+		return Message{}, fmt.Errorf("%w: delay must be shorter than the queue's retention (%s)", ErrInvalidMessage, q.cfg.Retention)
 	}
 	if err := q.b.checkDisk(); err != nil {
 		return Message{}, err
@@ -278,7 +297,7 @@ func (q *Queue) Receive(ctx context.Context, wait time.Duration) (Delivery, erro
 
 func (q *Queue) Ack(leaseID string) error {
 	err := q.settle(leaseID, func(m *Message, now time.Time) bool {
-		q.st.append(op{kind: opAck, queue: q.name, id: m.ID, at: now})
+		q.st.append(op{kind: opAck, queue: q.name, id: m.ID, at: now, purge: !q.cfg.keepsHistory()})
 		q.finishLocked(m)
 		return false
 	})
@@ -299,7 +318,7 @@ func (q *Queue) Nack(leaseID string) error {
 
 // DeadLetter fails the message without retrying it: it goes to the dead
 // letter queue now, or is dropped if the queue has none (kept as history
-// either way). For failures that retrying can't fix.
+// only by persistent queues). For failures that retrying can't fix.
 func (q *Queue) DeadLetter(leaseID string) error {
 	err := q.settle(leaseID, func(m *Message, _ time.Time) bool {
 		q.finishLocked(m)
@@ -408,7 +427,8 @@ func (q *Queue) close() {
 
 // ingest receives a dead-lettered message from src. Requires persist.RLock.
 // The DLQ ignores MaxMessages: refusing would mean losing data.
-func (q *Queue) ingest(src string, old *Message) bool {
+// purgeSrc deletes the source row instead of keeping it as dead_lettered history.
+func (q *Queue) ingest(src string, old *Message, purgeSrc bool) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
@@ -416,7 +436,7 @@ func (q *Queue) ingest(src string, old *Message) bool {
 	}
 	q.seq++
 	m := &Message{ID: old.ID, GroupID: old.GroupID, EnqueuedAt: q.b.clock.Now(), ReplayOf: old.ReplayOf, seq: q.seq}
-	q.st.append(op{kind: opMove, queue: src, id: old.ID, dst: q.name, msg: msgRecord{Seq: m.seq, EnqueuedAt: m.EnqueuedAt}})
+	q.st.append(op{kind: opMove, queue: src, id: old.ID, dst: q.name, purge: purgeSrc, msg: msgRecord{Seq: m.seq, EnqueuedAt: m.EnqueuedAt}})
 	q.addLocked(m)
 	q.b.hooks.Event(q.name, EvDeadLetterIn, 1)
 	return true
@@ -441,6 +461,71 @@ func (q *Queue) replayInsert(src string, rows []historyRow) (int, error) {
 	}
 	q.b.hooks.Event(q.name, EvReplayIn, len(rows))
 	return len(rows), nil
+}
+
+// expire deletes the live messages enqueued before cutoff, unprocessed.
+// Messages in flight are left alone: their lease ends first (ack, nack or
+// timeout) and, if they are still live, the next pass takes them. Returns
+// how many expired.
+func (q *Queue) expire(cutoff time.Time) int {
+	q.b.persist.RLock()
+	defer q.b.persist.RUnlock()
+	q.mu.Lock()
+	n, dead := q.expireAllLocked(cutoff)
+	q.mu.Unlock()
+	q.flushDead(dead)
+	return n
+}
+
+func (q *Queue) expireAllLocked(cutoff time.Time) (int, []*Message) {
+	if q.closed {
+		return 0, nil
+	}
+	// Run out leases first, so a message whose lease already ended counts as
+	// waiting (or is dead-lettered by its retry policy) rather than in flight.
+	dead := q.promoteLocked(q.b.clock.Now())
+	q.oldestLocked() // drop processed messages from the front of order
+	n := 0
+	for i := q.orderHead; i < len(q.order); i++ {
+		m := q.order[i]
+		if !m.EnqueuedAt.Before(cutoff) {
+			break // order is enqueue order: the rest are younger
+		}
+		if m.done || m.state == stateInFlight {
+			continue
+		}
+		q.expireLocked(m)
+		q.st.append(op{kind: opExpire, queue: q.name, id: m.ID})
+		n++
+	}
+	if n == 0 {
+		return 0, dead
+	}
+	// Expired messages may sit anywhere in the heaps: rebuild them without.
+	q.ready.filter(func(m *Message) bool { return !m.done })
+	q.delayed.filter(func(m *Message) bool { return !m.done })
+	q.signalLocked()
+	return n, dead
+}
+
+// expireLocked removes a live message that is not in flight. The caller
+// rebuilds the ready and delayed heaps afterwards.
+func (q *Queue) expireLocked(m *Message) {
+	g := m.group
+	if g != nil && len(g.msgs) > 0 && g.msgs[0] != m {
+		// Not the head: it was never scheduled; just leave the group.
+		for i, gm := range g.msgs {
+			if gm == m {
+				g.msgs = append(g.msgs[:i], g.msgs[i+1:]...)
+				break
+			}
+		}
+		m.group = nil
+		delete(q.msgs, m.ID)
+		m.done = true
+		return
+	}
+	q.finishLocked(m) // head (or ungrouped): unblocks the next of its group
 }
 
 // --- internals: *Locked funcs require q.mu (and persist.RLock when they log) ---
@@ -644,12 +729,12 @@ func (q *Queue) nextDueLocked() (time.Time, bool) {
 func (q *Queue) flushDead(msgs []*Message) {
 	for _, m := range msgs {
 		if dlq := q.cfg.DeadLetterQueue; dlq != "" {
-			if dst, err := q.b.Get(dlq); err == nil && dst.ingest(q.name, m) {
+			if dst, err := q.b.Get(dlq); err == nil && dst.ingest(q.name, m, !q.cfg.keepsHistory()) {
 				q.b.hooks.Event(q.name, EvDeadLettered, 1)
 				continue
 			}
 		}
-		q.st.append(op{kind: opDrop, queue: q.name, id: m.ID, at: q.b.clock.Now()})
+		q.st.append(op{kind: opDrop, queue: q.name, id: m.ID, at: q.b.clock.Now(), purge: !q.cfg.keepsHistory()})
 		q.b.hooks.Event(q.name, EvDropped, 1)
 		slog.Warn("message dropped after exhausting retries", "queue", q.name, "id", m.ID, "attempts", m.Attempts)
 	}

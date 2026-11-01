@@ -8,7 +8,7 @@ Named FIFO queues over HTTP, with:
 - **ordering groups**: strict order per entity, parallel across entities;
 - **delayed messages**;
 - **topics**: publish once, every subscribed queue gets a copy, atomically;
-- **history and replay** of processed messages;
+- **persistent queues** that keep processed messages for replay (others delete on ack and expire waiting messages after 14 days);
 - **multitenancy**: each API key belongs to a tenant and only sees its queues;
 - **admin UI** at `/admin/`: queues, topics and messages at a glance, read-only;
 - every acknowledged write is **fsynced**: a crash never loses what a client saw.

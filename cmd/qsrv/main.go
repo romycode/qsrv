@@ -46,7 +46,7 @@ func run() error {
 		backupKeep  = flag.Int("backup-keep", intEnv("QSRV_BACKUP_KEEP", 24), "snapshots to keep (oldest are deleted)")
 		adminUI     = flag.Bool("admin", envOr("QSRV_ADMIN", "true") != "false", "serve the read-only admin UI at /admin/ (sign in with an API key)")
 		minFree     = flag.String("min-free-disk", envOr("QSRV_MIN_FREE_DISK", "1GiB"), "below this free space on the data dir, refuse sends with 503 storage_full (e.g. 500MiB, 2GiB; 0 disables)")
-		janitor     = flag.Duration("retention-check", time.Minute, "how often expired history is purged")
+		janitor     = flag.Duration("retention-check", time.Minute, "how often messages past their queue's retention are expired")
 		simLatency  = flag.Duration("debug-simulated-sync-latency", 0, "BENCHMARK ONLY: extra latency per commit to emulate slow disks")
 		metricsAddr = flag.String("metrics-addr", envOr("QSRV_METRICS_ADDR", "127.0.0.1:9464"), "Prometheus /metrics listen address (no auth: keep it private; empty disables)")
 		logLevel    = flag.String("log-level", envOr("QSRV_LOG_LEVEL", "info"), "debug|info|warn|error")

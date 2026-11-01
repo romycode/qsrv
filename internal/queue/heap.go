@@ -1,5 +1,7 @@
 package queue
 
+import "container/heap"
+
 // heapOf is a minimal generic adapter over container/heap.
 type heapOf[T any] struct {
 	s    []T
@@ -19,4 +21,20 @@ func (h *heapOf[T]) Pop() any {
 	h.s[n-1] = zero
 	h.s = h.s[:n-1]
 	return x
+}
+
+// filter keeps the elements for which keep is true and restores the heap.
+func (h *heapOf[T]) filter(keep func(T) bool) {
+	out := h.s[:0]
+	for _, x := range h.s {
+		if keep(x) {
+			out = append(out, x)
+		}
+	}
+	var zero T
+	for i := len(out); i < len(h.s); i++ {
+		h.s[i] = zero
+	}
+	h.s = out
+	heap.Init(h)
 }

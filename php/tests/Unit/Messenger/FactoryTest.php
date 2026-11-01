@@ -37,7 +37,7 @@ final class FactoryTest extends TestCase
     {
         $c = QsrvTransportFactory::parse('qsrvs://qsrv.example.com', [
             'api_key' => 'k', 'queue' => 'q',
-            'queue_config' => ['visibility_timeout' => '1m', 'retry' => ['max_attempts' => 3, 'initial_backoff' => 2], 'retention' => 0],
+            'queue_config' => ['visibility_timeout' => '1m', 'retry' => ['max_attempts' => 3, 'initial_backoff' => 2], 'persistent' => true],
         ]);
         self::assertSame('https://qsrv.example.com', $c['url']);
         self::assertSame(5.0, $c['wait_time']);
@@ -46,7 +46,8 @@ final class FactoryTest extends TestCase
         self::assertSame(60.0, $c['queue_config']->visibilityTimeout);
         self::assertSame(3, $c['queue_config']->retry?->maxAttempts);
         self::assertSame(2.0, $c['queue_config']->retry?->initialBackoff);
-        self::assertSame(0.0, $c['queue_config']->retention);
+        self::assertTrue($c['queue_config']->persistent);
+        self::assertNull($c['queue_config']->retention);
     }
 
     public function testOptionsOverrideDsn(): void

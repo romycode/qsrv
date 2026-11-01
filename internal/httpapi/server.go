@@ -14,7 +14,7 @@ import (
 
 const (
 	MaxWait          = 20 * time.Second
-	DefaultRetention = 90 * 24 * time.Hour
+	DefaultRetention = queue.DefaultRetention
 )
 
 type Options struct {
@@ -84,7 +84,11 @@ func New(b *queue.Broker, o Options) http.Handler {
 func toAPIQueue(sc scope, q *queue.Queue) api.Queue {
 	c := q.Config()
 	st := q.Stats()
-	ret := api.Duration(c.Retention)
+	var ret *api.Duration
+	if !c.Persistent {
+		r := api.Duration(c.Retention)
+		ret = &r
+	}
 	return api.Queue{
 		Name: sc.local(q.Name()),
 		QueueConfig: api.QueueConfig{
@@ -98,7 +102,8 @@ func toAPIQueue(sc scope, q *queue.Queue) api.Queue {
 			DeadLetterQueue: sc.local(c.DeadLetterQueue),
 			Ordering:        string(c.Ordering),
 			MaxMessages:     c.MaxMessages,
-			Retention:       &ret,
+			Retention:       ret,
+			Persistent:      c.Persistent,
 		},
 		Stats: api.Stats(st),
 	}
@@ -147,8 +152,19 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		Ordering:          queue.Ordering(in.Ordering),
 		MaxMessages:       in.MaxMessages,
 		Retention:         DefaultRetention,
+		Persistent:        in.Persistent,
 	}
-	if in.Retention != nil {
+	switch {
+	case in.Persistent && in.Retention != nil:
+		writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "retention and persistent are exclusive: a persistent queue never expires messages")
+		return
+	case in.Persistent:
+		cfg.Retention = 0
+	case in.Retention != nil:
+		if in.Retention.D() < queue.MinRetention {
+			writeAPIErr(w, http.StatusUnprocessableEntity, api.CodeInvalidConfig, "retention must be at least "+queue.MinRetention.String()+" (for no expiry, use persistent: true)")
+			return
+		}
 		cfg.Retention = in.Retention.D()
 	}
 	if in.Retry != nil {

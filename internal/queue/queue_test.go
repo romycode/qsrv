@@ -185,7 +185,7 @@ func TestDeleteUnblocksPollers(t *testing.T) {
 // Many producers / consumers; every message must be acked exactly once.
 func TestConcurrentExactlyOnceAck(t *testing.T) {
 	b := newTestBroker(t, nil)
-	q, _ := b.Create("q", Config{VisibilityTimeout: time.Minute})
+	q, _ := b.Create("q", Config{VisibilityTimeout: time.Minute, Persistent: true})
 	const producers, perProducer, consumers = 8, 2000, 8
 	total := producers * perProducer
 
@@ -256,7 +256,7 @@ func TestDeadLetterSkipsRetries(t *testing.T) {
 		t.Fatalf("unknown lease: %v", err)
 	}
 
-	noDLQ := mustCreate(t, b, "nodlq", Config{Retry: RetryPolicy{MaxAttempts: 5}})
+	noDLQ := mustCreate(t, b, "nodlq", Config{Retry: RetryPolicy{MaxAttempts: 5}, Persistent: true})
 	noDLQ.Send([]byte("x"), "")
 	noDLQ.DeadLetter(recv(t, noDLQ).LeaseID)
 	if s := noDLQ.Stats(); s.Messages != 0 || s.History != 1 {

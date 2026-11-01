@@ -22,7 +22,8 @@ chars). Each queue has its own settings, fixed at creation:
 | `dead_letter_queue` | none | where exhausted messages go (must exist) |
 | `ordering` | `available` | see [Ordering](#ordering-and-groups) |
 | `max_messages` | `0` (unlimited) | live messages; sends beyond it get `429 queue_full` (backpressure) |
-| `retention` | `2160h` (90 days) | how long processed messages are kept for replay; `0` = forever |
+| `retention` | `336h` (14 days) | how long a message may wait in the queue; older ones expire, deleted unprocessed (at least `1m`) |
+| `persistent` | `false` | never expire messages, and keep processed ones as history for replay. Excludes `retention` |
 
 Messages are opaque bytes (up to `-max-message-bytes`, 256 KiB by default).
 UTF-8 bodies travel as `body`, anything else as `body_base64`; clients handle
@@ -70,8 +71,8 @@ A failed delivery (nack or lease expiry) applies the queue's `retry` policy:
   of the queue. When due it returns to its **original FIFO position**.
 - In an ordering group it stays the group's head: the group waits for it.
 - When attempts run out it goes to the `dead_letter_queue` (same id, body and
-  group), or is `dropped` if there is none. Either way it stays in history and
-  can be replayed, and it unblocks its group.
+  group), or is `dropped` if there is none. Either way it unblocks its group;
+  in a persistent queue it also stays in history and can be replayed.
 - No jitter: messages that fail together retry together.
 
 ## Ordering and groups
@@ -123,13 +124,27 @@ echo '{"order_id": 1}' | qctl topic publish -group customer-42 orders
   keeps its queues and their messages. Up to 64 queues per topic.
 - Each copy stores the body, so a topic with N queues uses N times the space.
 
-## History, retention and replay
+## Retention, persistence and replay
 
-Ack does not delete. Processed messages stay in the database with their final
-state: `acked`, `dropped` or `dead_lettered`. A janitor deletes history older
-than the queue's `retention`. Live messages are never purged.
+By default a queue keeps a message only while it is waiting:
 
-**Replay** copies history of a queue into a destination queue as **new
+- **Ack deletes it.** So do `dropped` and `dead_lettered` (the copy in the
+  DLQ stays, under the DLQ's own settings). Nothing is kept for replay.
+- **Retention expires it.** A message still in the queue `retention` after
+  it was enqueued (default 14 days) is deleted unprocessed, counted in
+  `qsrv_messages_total{event="retention_expired"}`, which fires the
+  `QsrvMessagesExpired` alert. A message in flight is not expired while
+  its lease lasts. A janitor checks every `-retention-check` (1m). A delay
+  must be shorter than the queue's retention.
+
+A **persistent** queue (`"persistent": true`, `qctl create -persistent`)
+does the opposite: messages never expire, and processed ones stay in the
+database with their final state (`acked`, `dropped` or `dead_lettered`)
+until the queue is deleted. That history is what replay reads and what the
+admin UI shows as *Processed*. It grows without bound: size the disk for it.
+Persistence is fixed at creation, like the rest of a queue's settings.
+
+**Replay** (persistent queues only; others answer `422`) copies history of a queue into a destination queue as **new
 messages**: new id, same body and `group_id`, `replay_of` = original id, in
 original order. Filter by `enqueued_at` range, group and final state. It is
 paginated with a cursor, and each page is atomic.
@@ -139,7 +154,8 @@ with live traffic: replaying into a live queue interleaves old and new
 messages of the same group.
 
 ```sh
-qctl create -retention 0 orders-replay
+qctl create -persistent orders     # the source must be persistent
+qctl create orders-replay
 qctl replay -to orders-replay -from 2026-10-01 -until 2026-10-15 orders
 qctl replay -to orders-replay -group customer-42 -states acked orders
 ```

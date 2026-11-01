@@ -34,7 +34,7 @@
       <div x-show="summary?.topics"><dt>Subscribed to topics</dt><dd x-text="(summary?.topics || []).join(', ')"></dd></div>
       <div><dt>Ordering</dt><dd x-text="info?.ordering === 'strict' ? 'Strict: one message in flight at a time' : 'By group: strict within each group'"></dd></div>
       <div><dt>Capacity</dt><dd x-text="info?.max_messages ? fmtNum(info.max_messages) + ' messages' : 'Unlimited'"></dd></div>
-      <div><dt>History retention</dt><dd x-text="info?.retention === '0s' ? 'Forever' : fmtDur(info?.retention)"></dd></div>
+      <div><dt>Retention</dt><dd x-text="info?.persistent ? 'Persistent: never expires, history kept' : fmtDur(info?.retention) + ', deleted on ack'"></dd></div>
     </dl>
   </details>
 

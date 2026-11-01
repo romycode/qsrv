@@ -207,6 +207,10 @@ func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.D
 			unlock()
 			return nil, fmt.Errorf("queue %q: %w", q.name, err)
 		}
+		if !q.cfg.Persistent && delay >= q.cfg.Retention {
+			unlock()
+			return nil, fmt.Errorf("queue %q: %w: delay must be shorter than the queue's retention (%s)", q.name, ErrInvalidMessage, q.cfg.Retention)
+		}
 	}
 
 	now := b.clock.Now()

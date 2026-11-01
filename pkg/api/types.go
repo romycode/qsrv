@@ -37,9 +37,14 @@ type QueueConfig struct {
 	DeadLetterQueue   string       `json:"dead_letter_queue,omitempty"`
 	Ordering          string       `json:"ordering,omitempty"` // "available" (default) | "strict"
 	MaxMessages       int          `json:"max_messages,omitempty"`
-	// Retention of processed messages for replay. nil = server default (90 days),
-	// "0s" = keep forever.
+	// Retention: how long a message may wait in the queue before it expires,
+	// deleted unprocessed. nil = server default (14 days). Not allowed with
+	// Persistent.
 	Retention *Duration `json:"retention,omitempty"`
+	// Persistent queues never expire messages and keep every processed one
+	// as history for replay. Others delete a message when it is acked,
+	// dropped or dead-lettered.
+	Persistent bool `json:"persistent,omitempty"`
 }
 
 type Stats struct {

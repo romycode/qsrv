@@ -1117,7 +1117,7 @@
     {
       "type": "timeseries",
       "title": "Failures",
-      "description": "nacked: a consumer reported a failure. expired: a lease ran out (consumer crashed or too slow). dead_lettered: retries exhausted, moved to the DLQ. dropped: retries exhausted, no DLQ.",
+      "description": "nacked: a consumer reported a failure. expired: a lease ran out (consumer crashed or too slow). dead_lettered: retries exhausted, moved to the DLQ. dropped: retries exhausted, no DLQ. retention_expired: waited longer than the queue's retention, deleted unprocessed.",
       "id": 14,
       "gridPos": {
         "x": 0,
@@ -1135,7 +1135,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (event) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"nacked|expired|dead_lettered|dropped\"}[$__interval]))",
+          "expr": "sum by (event) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"nacked|expired|dead_lettered|dropped|retention_expired\"}[$__interval]))",
           "legendFormat": "{{event}}",
           "refId": "A",
           "range": true,
@@ -1233,6 +1233,21 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "#8b96a5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "retention_expired"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
                 }
               }
             ]
@@ -1422,7 +1437,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (queue) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"dead_lettered|dropped\"}[1h]))",
+          "expr": "sum by (queue) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=~\"$queue\", event=~\"dead_lettered|dropped|retention_expired\"}[1h]))",
           "legendFormat": "__auto",
           "refId": "G",
           "range": false,
@@ -1970,7 +1985,7 @@
     {
       "type": "timeseries",
       "title": "Database files",
-      "description": "qsrv.db (live messages + history) and its WAL. A growing WAL means checkpoints are blocked by a long reader.",
+      "description": "qsrv.db (live messages + history of persistent queues) and its WAL. A growing WAL means checkpoints are blocked by a long reader.",
       "id": 22,
       "gridPos": {
         "x": 8,

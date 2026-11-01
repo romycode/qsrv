@@ -153,7 +153,7 @@ func BenchmarkReplay(b *testing.B) {
 	const history, page = 5_000, 1_000
 	dir := b.TempDir()
 	seed(b, dir, func(br *Broker) {
-		src := mustQueue(b, br, "src", Config{Retention: 0})
+		src := mustQueue(b, br, "src", Config{Persistent: true})
 		mustQueue(b, br, "dst", Config{})
 		body := make([]byte, 512)
 		ctx := context.Background()

@@ -28,21 +28,26 @@ qs -X PUT $Q/v1/queues/orders -d '{
   "dead_letter_queue": "orders-dlq",
   "ordering": "available",
   "max_messages": 0,
-  "retention": "2160h"
+  "retention": "336h"
 }'
 ```
 
 Every field is optional; see [concepts.md](concepts.md#queues) for defaults.
+`retention` (expiry of waiting messages, default `336h`) and `"persistent": true`
+(no expiry, processed messages kept for replay) are exclusive: both, or a
+`retention` under `1m`, is `422`. A persistent queue's response has
+`"persistent": true` and no `retention`.
 A queue response is the config plus stats:
 
 ```json
 {"name": "orders", "visibility_timeout": "1m0s", "retry": {...}, "dead_letter_queue": "orders-dlq",
- "ordering": "available", "retention": "2160h0m0s",
+ "ordering": "available", "retention": "336h0m0s",
  "stats": {"messages": 12, "ready": 9, "delayed": 1, "in_flight": 2, "groups": 3, "history": 4031}}
 ```
 
 `messages` counts live messages (ready + delayed + in flight + blocked behind
-their group); `history` counts processed messages kept for replay.
+their group); `history` counts processed messages kept for replay (always
+`0` unless the queue is persistent).
 
 ## Messages
 
@@ -131,7 +136,8 @@ qs $Q/v1/queues/orders/replay -d '{"to": "orders-replay", "from": "2026-10-01T00
 ```
 
 `states`: any of `acked`, `dropped`, `dead_lettered` (default all). `limit`
-default 1000, max 10000. Each page is atomic.
+default 1000, max 10000. Each page is atomic. The source must be persistent:
+other queues keep no history (`422`).
 
 ## Inspect (peek)
 
@@ -161,7 +167,8 @@ can hold fewer than `limit` messages and still have a `next_cursor` when a
 ### One message: `GET /v1/queues/{name}/messages/{id}` → `200`
 
 The same fields plus `body` (or `body_base64` when it isn't UTF-8). Works
-for live and processed messages; `404 not_found` once retention removed it.
+for live and processed messages; `404 not_found` once it is gone (acked in a
+non-persistent queue, expired, or its queue deleted).
 
 ### Overview: `GET /v1/overview` → `200`
 
