@@ -24,8 +24,9 @@ const DLQ = 'example-php-orders-dlq';
 $qsrv = new Client(getenv('QSRV_ADDR') ?: 'http://localhost:8080', (string) getenv('QSRV_API_KEY'));
 
 // --- Setup -----------------------------------------------------------------
-// Up to 3 deliveries with 200ms, 400ms backoff, then the DLQ. Processed
-// messages stay in history (replayable) for the default 90 days.
+// Up to 3 deliveries with 200ms, 400ms backoff, then the DLQ. An acked
+// message is deleted; messages left waiting expire after the default 14
+// days. persistent: true would keep them all, processed ones for replay.
 foreach ([QUEUE, DLQ] as $q) { // a DLQ can't be deleted while in use
     try {
         $qsrv->deleteQueue($q);

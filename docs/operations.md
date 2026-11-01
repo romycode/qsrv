@@ -50,7 +50,7 @@ export QSRV_API_KEYS="acme:billing:$(openssl rand -hex 32)"   # tenant:name:key,
 | `-api-keys-file` / `QSRV_API_KEYS_FILE`, `QSRV_API_KEYS` | — | `tenant:name:key` entries; required unless `-insecure-no-auth`. See [API keys and tenants](#api-keys-and-tenants) |
 | `-tls-cert`, `-tls-key` | — | serve HTTPS directly; otherwise put TLS in front |
 | `-max-message-bytes` | 256KiB | |
-| `-retention-check` | 1m | janitor interval |
+| `-retention-check` | 1m | how often waiting messages past their queue's retention are expired |
 | `-backup-dir` / `QSRV_BACKUP_DIR` | — | snapshots of every tenant here; see [Backups](#backups) |
 | `-backup-every` / `QSRV_BACKUP_EVERY` | 1h | snapshot interval |
 | `-backup-keep` / `QSRV_BACKUP_KEEP` | 24 | snapshots kept |
@@ -129,8 +129,9 @@ API address (no extra service, nothing to install).
   5 minutes, red after an hour). Dead letter queues holding messages are
   marked. Topics and their subscribers. Refreshes every 3 seconds.
 - **A queue**: its counts and settings (lease, retries, DLQ, ordering,
-  capacity, retention), the messages in it and the processed ones (acked,
-  dropped, dead-lettered, while retention keeps them), filterable by state.
+  capacity, retention or persistence), the messages in it and, for
+  persistent queues, the processed ones (acked, dropped, dead-lettered),
+  filterable by state.
   Click a message to see its body (JSON is indented) and metadata.
 - It never changes anything: no sends, acks, deletes or replays. Looking at
   a message doesn't receive it.
@@ -159,7 +160,7 @@ be ahead of disk; restarting into a full disk would fail the same way. To
 never get there, below `-min-free-disk` (default 1GiB) qsrv refuses what
 adds data, with `503 storage_full` and `Retry-After: 30`: sends, publishes,
 replays and creating queues or topics. Receive, ack, nack, extend, deletes
-and the retention purge keep working, so consumers drain the backlog. Writes
+and retention expiry keep working, so consumers drain the backlog. Writes
 are accepted again within 2 seconds of the space coming back.
 
 `qsrv_storage_low` is 1 while it lasts, and the `QsrvStorageFull` alert
@@ -335,8 +336,9 @@ tail latencies will be worse):
 | 3ms | gp3 (bad case) | ~740 | 18ms / 25ms |
 
 Server CPU ≈ 0.5ms per full message cycle (3 HTTP requests); RSS ~20-30MB.
-Storage: ~body size + ~150 bytes per message; 50k/day of 1KB ≈ 60MB/day of
-history, ~5.5GB at the default 90-day retention.
+Storage: ~body size + ~150 bytes per message. Non-persistent queues only
+hold what is waiting; a persistent queue keeps everything: 50k/day of 1KB ≈
+60MB/day of history, ~22GB a year.
 
 ## Limits
 

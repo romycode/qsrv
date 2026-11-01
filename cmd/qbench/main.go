@@ -76,12 +76,11 @@ func main() {
 			qnames = append(qnames, fmt.Sprintf("bench%03d/%s", i, base))
 		}
 	}
-	zero := api.Duration(0)
 	for _, q := range qnames {
 		if _, err := c.CreateQueue(ctx, q, api.QueueConfig{
 			VisibilityTimeout: api.Duration(30 * time.Second),
 			Retry:             &api.RetryPolicy{MaxAttempts: 5},
-			Retention:         &zero,
+			Persistent:        true, // no expiry pass during the run
 		}); err != nil {
 			fatal(err)
 		}

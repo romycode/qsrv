@@ -28,7 +28,7 @@ const (
 // tenant, so concurrent commits of all tenants share one transaction and one
 // fsync (group commit).
 //
-// Lock order: history -> persist -> b.mu -> q.mu -> store internals.
+// Lock order: persist -> b.mu -> q.mu -> store internals.
 // Every op that mutates state and logs it holds persist.RLock throughout;
 // Delete takes persist.Lock so no op on a queue can land after its delete.
 type Broker struct {
@@ -43,7 +43,6 @@ type Broker struct {
 	diskCheck func() // nil when the guard is off; tests call it
 	backups   *backups
 
-	history sync.RWMutex // replay (R) vs retention purge (W)
 	persist sync.RWMutex
 
 	mu     sync.RWMutex
@@ -58,7 +57,7 @@ type Broker struct {
 
 type Options struct {
 	Clock        Clock
-	JanitorEvery time.Duration // retention purge interval; default 1m
+	JanitorEvery time.Duration // retention expiry interval; default 1m
 	// NoSync disables fsync (synchronous=OFF). Tests only: a crash loses data.
 	NoSync  bool
 	OnFatal func(error)
@@ -146,12 +145,20 @@ func (b *Broker) Create(name string, cfg Config) (*Queue, error) {
 		cfg.Ordering = OrderingAvailable
 	}
 	switch {
+	case cfg.Persistent:
+		cfg.Retention = 0 // never expires
+	case cfg.Retention == 0:
+		cfg.Retention = DefaultRetention
+	}
+	switch {
 	case cfg.Ordering != OrderingAvailable && cfg.Ordering != OrderingStrict:
 		return nil, fmt.Errorf("%w: ordering must be %q or %q", ErrInvalidConfig, OrderingAvailable, OrderingStrict)
 	case cfg.VisibilityTimeout < time.Second || cfg.VisibilityTimeout > 12*time.Hour:
 		return nil, fmt.Errorf("%w: visibility_timeout must be between 1s and 12h", ErrInvalidConfig)
 	case cfg.Retry.MaxAttempts < 0 || cfg.Retry.InitialBackoff < 0 || cfg.Retry.MaxBackoff < 0 || cfg.MaxMessages < 0 || cfg.Retention < 0:
 		return nil, fmt.Errorf("%w: negative values", ErrInvalidConfig)
+	case !cfg.Persistent && cfg.Retention < MinRetention:
+		return nil, fmt.Errorf("%w: retention must be at least %s", ErrInvalidConfig, MinRetention)
 	case cfg.DeadLetterQueue == name:
 		return nil, fmt.Errorf("%w: queue cannot be its own DLQ", ErrInvalidConfig)
 	case cfg.DeadLetterQueue != "" && !sameTenant(name, cfg.DeadLetterQueue):
@@ -243,9 +250,10 @@ const (
 	EvRedelivered               // leased again (attempts > 1)
 	EvAcked
 	EvNacked
-	EvExpired      // lease timed out
-	EvDeadLettered // retries exhausted, moved to DLQ
-	EvDropped      // retries exhausted, no DLQ
+	EvExpired          // lease timed out
+	EvDeadLettered     // retries exhausted, moved to DLQ
+	EvDropped          // retries exhausted, no DLQ
+	EvRetentionExpired // waited longer than the queue's retention: deleted unprocessed
 )
 
 // Hooks receive observability callbacks. All are optional and must be cheap
@@ -369,8 +377,9 @@ func (b *Broker) Replay(src string, req ReplayRequest) (ReplayResult, error) {
 		return ReplayResult{}, fmt.Errorf("destination: %w", err)
 	}
 
-	b.history.RLock() // rows can't be purged between read and copy
-	defer b.history.RUnlock()
+	if !srcQ.cfg.keepsHistory() {
+		return ReplayResult{}, fmt.Errorf("%w: queue %s is not persistent: it keeps no history to replay", ErrInvalidConfig, src)
+	}
 
 	rows, err := srcQ.st.history(src, states, req.From, req.Until, req.GroupID, req.After, req.Limit)
 	if err != nil {
@@ -396,37 +405,33 @@ func (b *Broker) Replay(src string, req ReplayRequest) (ReplayResult, error) {
 	return res, nil
 }
 
-// Purge applies retention once, for every queue. Exposed for tests/ops.
-func (b *Broker) Purge(ctx context.Context) {
-	b.history.Lock()
-	defer b.history.Unlock()
+// Expire applies retention once, for every non-persistent queue: live
+// messages enqueued longer ago than its retention are deleted unprocessed.
+// Exposed for tests/ops.
+func (b *Broker) Expire(ctx context.Context) {
 	b.mu.RLock()
-	type job struct {
-		name string
-		ret  time.Duration
-		st   *store
-	}
-	jobs := make([]job, 0, len(b.queues))
-	for name, q := range b.queues {
-		if q.cfg.Retention > 0 {
-			jobs = append(jobs, job{name, q.cfg.Retention, q.st})
+	qs := make([]*Queue, 0, len(b.queues))
+	for _, q := range b.queues {
+		if !q.cfg.Persistent {
+			qs = append(qs, q)
 		}
 	}
 	b.mu.RUnlock()
 
 	now := b.clock.Now()
-	for _, j := range jobs {
+	expired := false
+	for _, q := range qs {
 		if ctx.Err() != nil {
-			return
+			break
 		}
-		n, err := j.st.purge(j.name, now.Add(-j.ret))
-		if err != nil {
-			slog.Error("retention purge", "queue", j.name, "err", err)
-			continue
+		if n := q.expire(now.Add(-q.cfg.Retention)); n > 0 {
+			expired = true
+			b.hooks.Event(q.name, EvRetentionExpired, n)
+			slog.Warn("messages expired unprocessed", "queue", q.name, "messages", n, "retention", q.cfg.Retention)
 		}
-		if n > 0 {
-			slog.Info("retention purge", "queue", j.name, "deleted", n)
-		}
+	}
+	if expired {
+		b.store.sync()
 	}
 }
 
@@ -442,7 +447,7 @@ func (b *Broker) janitor(every time.Duration) {
 		case <-b.stop:
 			return
 		case <-t.C:
-			b.Purge(ctx)
+			b.Expire(ctx)
 		}
 	}
 }

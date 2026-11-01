@@ -33,7 +33,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  *   queue_config   settings the queue is created with (`options` only):
  *                  visibility_timeout, retry (false = no retries, or
  *                  {max_attempts, initial_backoff, max_backoff, multiplier}),
- *                  dead_letter_queue, ordering, max_messages, retention.
+ *                  dead_letter_queue, ordering, max_messages, retention, persistent.
  *                  Durations as "30s" or seconds. qsrv can't change an
  *                  existing queue: setup fails if they differ.
  *

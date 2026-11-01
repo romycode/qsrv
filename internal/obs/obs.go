@@ -16,16 +16,17 @@ import (
 )
 
 var eventNames = map[queue.Event]string{
-	queue.EvSent:         "sent",
-	queue.EvDeadLetterIn: "dead_letter_in",
-	queue.EvReplayIn:     "replay_in",
-	queue.EvDelivered:    "delivered",
-	queue.EvRedelivered:  "redelivered",
-	queue.EvAcked:        "acked",
-	queue.EvNacked:       "nacked",
-	queue.EvExpired:      "expired",
-	queue.EvDeadLettered: "dead_lettered",
-	queue.EvDropped:      "dropped",
+	queue.EvSent:             "sent",
+	queue.EvDeadLetterIn:     "dead_letter_in",
+	queue.EvReplayIn:         "replay_in",
+	queue.EvDelivered:        "delivered",
+	queue.EvRedelivered:      "redelivered",
+	queue.EvAcked:            "acked",
+	queue.EvNacked:           "nacked",
+	queue.EvExpired:          "expired",
+	queue.EvDeadLettered:     "dead_lettered",
+	queue.EvDropped:          "dropped",
+	queue.EvRetentionExpired: "retention_expired",
 }
 
 type Obs struct {

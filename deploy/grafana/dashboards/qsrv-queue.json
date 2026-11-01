@@ -772,7 +772,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=\"$queue\", event=~\"dead_lettered|dropped\"}[1h])) or vector(0)",
+          "expr": "sum(increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=\"$queue\", event=~\"dead_lettered|dropped|retention_expired\"}[1h])) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A",
           "range": false,
@@ -1152,7 +1152,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (event) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=\"$queue\", event=~\"nacked|expired|dead_lettered|dropped\"}[$__interval]))",
+          "expr": "sum by (event) (increase(qsrv_messages_total{job=~\"$job\", instance=~\"$instance\", queue=\"$queue\", event=~\"nacked|expired|dead_lettered|dropped|retention_expired\"}[$__interval]))",
           "legendFormat": "{{event}}",
           "refId": "A",
           "range": true,
@@ -1250,6 +1250,21 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "#8b96a5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "retention_expired"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
                 }
               }
             ]

@@ -184,10 +184,10 @@ def overview():
                 desc="ready: deliverable now. delayed: scheduled or backing off after a failure. in_flight: leased to a consumer. waiting: behind the head of its ordering group."))
     P.append(ts(g, "Throughput", [target(f'sum by (event) (rate(qsrv_messages_total{{{QSEL}, event=~"sent|delivered|acked"}}[$__rate_interval]))', "{{event}}")],
                 unit="ops", desc="Messages per second sent, delivered (including redeliveries) and acked."))
-    P.append(ts(g, "Failures", [target(f'sum by (event) (increase(qsrv_messages_total{{{QSEL}, event=~"nacked|expired|dead_lettered|dropped"}}[$__interval]))', "{{event}}", interval="1m")],
+    P.append(ts(g, "Failures", [target(f'sum by (event) (increase(qsrv_messages_total{{{QSEL}, event=~"nacked|expired|dead_lettered|dropped|retention_expired"}}[$__interval]))', "{{event}}", interval="1m")],
                 bars=True, stack=True,
-                overrides=[color_override("dead_lettered", "red"), color_override("dropped", "dark-red"), color_override("expired", "#e0a020"), color_override("nacked", "#8b96a5")],
-                desc="nacked: a consumer reported a failure. expired: a lease ran out (consumer crashed or too slow). dead_lettered: retries exhausted, moved to the DLQ. dropped: retries exhausted, no DLQ."))
+                overrides=[color_override("dead_lettered", "red"), color_override("dropped", "dark-red"), color_override("expired", "#e0a020"), color_override("nacked", "#8b96a5"), color_override("retention_expired", "purple")],
+                desc="nacked: a consumer reported a failure. expired: a lease ran out (consumer crashed or too slow). dead_lettered: retries exhausted, moved to the DLQ. dropped: retries exhausted, no DLQ. retention_expired: waited longer than the queue's retention, deleted unprocessed."))
     P.append(ts(g, "Dead letter queues", [target(f'sum by (queue) (qsrv_queue_messages{{{QSEL}}}) and on (queue) qsrv:dlq:is_dlq', "{{queue}}")],
                 legend_calcs=["lastNotNull"], desc="Messages waiting in dead letter queues: failures someone has to look at (admin UI, or qctl replay). Needs the recording rule in alerts.yml."))
 
@@ -199,7 +199,7 @@ def overview():
         target(f'sum by (queue) (qsrv_queue_messages{{{QSEL}, state="waiting"}})', ref="D", instant=True, fmt="table"),
         target(f'max by (queue) (qsrv_queue_oldest_message_age_seconds{{{QSEL}}})', ref="E", instant=True, fmt="table"),
         target(f'sum by (queue) (rate(qsrv_messages_total{{{QSEL}, event="acked"}}[5m]))', ref="F", instant=True, fmt="table"),
-        target(f'sum by (queue) (increase(qsrv_messages_total{{{QSEL}, event=~"dead_lettered|dropped"}}[1h]))', ref="G", instant=True, fmt="table"),
+        target(f'sum by (queue) (increase(qsrv_messages_total{{{QSEL}, event=~"dead_lettered|dropped|retention_expired"}}[1h]))', ref="G", instant=True, fmt="table"),
     ]
     names = {"Value #A": "Ready", "Value #B": "Delayed", "Value #C": "In flight", "Value #D": "Waiting in group",
              "Value #E": "Oldest", "Value #F": "Acked/s (5m)", "Value #G": "Failed (1h)", "queue": "Queue"}
@@ -245,7 +245,7 @@ def overview():
         target(f'predict_linear(qsrv_disk_free_bytes{{{SEL}}}[6h], 3 * 24 * 3600)', "free in 3 days at this rate", "B")],
         unit="bytes", w=8, desc="Free space on the data dir's filesystem, and where it is heading. Below -min-free-disk qsrv refuses new messages."))
     P.append(ts(g, "Database files", [target(f'qsrv_db_size_bytes{{{SEL}}}', "{{file}}")], unit="bytes", w=8,
-                desc="qsrv.db (live messages + history) and its WAL. A growing WAL means checkpoints are blocked by a long reader."))
+                desc="qsrv.db (live messages + history of persistent queues) and its WAL. A growing WAL means checkpoints are blocked by a long reader."))
     P.append(ts(g, "Refusing sends (disk low)", [target(f'max(qsrv_storage_low{{{SEL}}})', "storage low")], w=8, min0=True,
                 th=thresholds((None, "green"), (1, "red")), show_th=True,
                 desc="1 while free disk is below -min-free-disk: sends get 503 storage_full, consumers keep draining."))
@@ -295,7 +295,7 @@ def queue_dash():
                   text_mode="name", desc="Where messages go when retries run out. No data: none, they are dropped."))
     P.append(stat(g, "Retries", [target(f'qsrv_queue_info{{{one}}}', legend="{{max_attempts}} attempts, ordering {{ordering}}", instant=True)], w=8, graph=False, text_mode="name",
                   desc="max_attempts: deliveries before giving up (0 = forever, 1 = no retries)."))
-    P.append(stat(g, "Failed in the last hour", [target(f'sum(increase(qsrv_messages_total{{{one}, event=~"dead_lettered|dropped"}}[1h])) or vector(0)', instant=True)], w=8, graph=False, decimals=0,
+    P.append(stat(g, "Failed in the last hour", [target(f'sum(increase(qsrv_messages_total{{{one}, event=~"dead_lettered|dropped|retention_expired"}}[1h])) or vector(0)', instant=True)], w=8, graph=False, decimals=0,
                   th=thresholds((None, "green"), (1, "red"))))
 
     P.append(row(g, "Over time"))
@@ -303,9 +303,9 @@ def queue_dash():
     P.append(ts(g, "Oldest message age", [target(f'max(qsrv_queue_oldest_message_age_seconds{{{one}}})', "oldest")], unit="s", th=AGE_TH, show_th=True))
     P.append(ts(g, "Throughput", [target(f'sum by (event) (rate(qsrv_messages_total{{{one}, event=~"sent|dead_letter_in|replay_in|delivered|acked"}}[$__rate_interval]))', "{{event}}")],
                 unit="ops", desc="In: sent, dead_letter_in (arriving from queues that use this one as DLQ), replay_in. Out: delivered, acked."))
-    P.append(ts(g, "Failures", [target(f'sum by (event) (increase(qsrv_messages_total{{{one}, event=~"nacked|expired|dead_lettered|dropped"}}[$__interval]))', "{{event}}", interval="1m")],
+    P.append(ts(g, "Failures", [target(f'sum by (event) (increase(qsrv_messages_total{{{one}, event=~"nacked|expired|dead_lettered|dropped|retention_expired"}}[$__interval]))', "{{event}}", interval="1m")],
                 bars=True, stack=True,
-                overrides=[color_override("dead_lettered", "red"), color_override("dropped", "dark-red"), color_override("expired", "#e0a020"), color_override("nacked", "#8b96a5")]))
+                overrides=[color_override("dead_lettered", "red"), color_override("dropped", "dark-red"), color_override("expired", "#e0a020"), color_override("nacked", "#8b96a5"), color_override("retention_expired", "purple")]))
     P.append(ts(g, "Redelivery ratio", [target(
         f'sum(rate(qsrv_messages_total{{{one}, event="redelivered"}}[$__rate_interval])) / sum(rate(qsrv_messages_total{{{one}, event="delivered"}}[$__rate_interval]))', "redelivered / delivered")],
         unit="percentunit", th=thresholds((None, "green"), (0.2, "red")), show_th=True,
@@ -325,13 +325,14 @@ RUNBOOK = """
 | **QsrvHTTP5xx** | Internal errors | Logs, `unhandled error` lines |
 | **QsrvMessagesTooOld** / **Critical** | A queue's oldest message waits over 10 min / 1 h | Are consumers running? A group blocked by a message that keeps failing? Admin UI → the queue |
 | **QsrvNoConsumers** | Ready messages and nothing delivered in 10 min | Start or fix the consumers of that queue |
-| **QsrvDeadLetters** | Messages ran out of retries | Look at them in the DLQ (admin UI), fix the cause, `qctl replay` |
+| **QsrvDeadLetters** | Messages ran out of retries | Look at them in the DLQ (admin UI), fix the cause, reprocess them |
+| **QsrvMessagesExpired** | Messages waited longer than the queue's `retention` and were deleted unprocessed | Consumers down or too slow; the messages are gone (replayable only from a persistent producer queue) |
 | **QsrvDLQNotEmpty** | A dead letter queue holds messages | Same: inspect, fix, replay or delete |
 | **QsrvHighRedeliveryRatio** | Many deliveries are retries | Handlers failing, or `visibility_timeout` shorter than the work |
 | **QsrvLeaseExpiries** | Leases running out | Consumers crashing or too slow: raise `visibility_timeout` or extend leases |
 | **QsrvQueueNearFull** | A queue is close to `max_messages` | Consumers are behind; sends will get 429 |
 | **QsrvSendsRejected** | Sends getting 429 | A queue is full |
-| **QsrvDiskSpaceLow** / **Critical** / **WillFill** | Disk filling up | Lower `retention`, grow the volume, check the WAL |
+| **QsrvDiskSpaceLow** / **Critical** / **WillFill** | Disk filling up | Drain backlogs, delete unused persistent queues, grow the volume, check the WAL |
 | **QsrvStorageFull** | qsrv refuses sends (below `-min-free-disk`) | Free space now; sends resume within seconds |
 | **QsrvBackupStale** | No snapshot in two intervals | Logs `snapshot failed`: backup disk full or not writable |
 | **QsrvSlowCommits** | fsync is slow | Disk saturated or degraded (EBS burst credits, noisy neighbour) |

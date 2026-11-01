@@ -30,7 +30,7 @@ func TestRestoreTenant(t *testing.T) {
 		return b
 	}
 	b := open()
-	a, _ := b.Create("acme/orders", Config{})
+	a, _ := b.Create("acme/orders", Config{Persistent: true})
 	b.Create("acme_1/orders", Config{}) // '_' must not match like LIKE would
 	b.CreateTopic("acme/events", []string{"acme/orders"})
 	g, _ := b.Create("globex/orders", Config{})

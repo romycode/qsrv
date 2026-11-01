@@ -282,7 +282,9 @@ document.addEventListener("alpine:init", () => {
       if (this.states.length) return "No messages in that state.";
       return this.view === "live"
         ? "No messages waiting or in flight."
-        : "No processed messages kept. Acked, dropped and dead-lettered messages show here for the queue's history retention.";
+        : (this.info?.persistent
+          ? "No processed messages yet. Acked, dropped and dead-lettered messages of this persistent queue show here."
+          : "This queue is not persistent: processed messages are deleted, so there is no history.");
     },
     async open(m) {
       this.copied = false;

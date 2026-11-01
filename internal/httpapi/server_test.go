@@ -161,13 +161,12 @@ func TestReplayHTTP(t *testing.T) {
 	srv := newServer(t)
 	ctx := context.Background()
 	c := client.New(srv.URL, key)
-	q, _ := c.CreateQueue(ctx, "src", api.QueueConfig{})
-	if q.Retention == nil || q.Retention.D() != httpapi.DefaultRetention {
-		t.Fatalf("default retention not applied: %+v", q.Retention)
+	q, _ := c.CreateQueue(ctx, "src", api.QueueConfig{Persistent: true})
+	if !q.Persistent || q.Retention != nil {
+		t.Fatalf("persistent queue: %+v", q.QueueConfig)
 	}
-	forever := api.Duration(0)
-	if q, _ := c.CreateQueue(ctx, "dst", api.QueueConfig{Retention: &forever}); q.Retention.D() != 0 {
-		t.Fatalf("explicit 0 retention lost: %v", q.Retention.D())
+	if q, _ := c.CreateQueue(ctx, "dst", api.QueueConfig{}); q.Persistent || q.Retention == nil || q.Retention.D() != httpapi.DefaultRetention {
+		t.Fatalf("default retention not applied: %+v", q.QueueConfig)
 	}
 	for i := range 3 {
 		c.Send(ctx, "src", []byte{byte('a' + i)}, "g")
@@ -195,6 +194,35 @@ func TestReplayHTTP(t *testing.T) {
 	info, _ := c.GetQueue(ctx, "src")
 	if info.Stats.History != 3 {
 		t.Fatalf("history %+v", info.Stats)
+	}
+	// dst is not persistent: the acked replay is deleted, nothing to replay.
+	c.Ack(ctx, "dst", d.LeaseID)
+	if info, _ := c.GetQueue(ctx, "dst"); info.Stats.History != 0 {
+		t.Fatalf("non-persistent queue kept history: %+v", info.Stats)
+	}
+	if _, err := c.Replay(ctx, "dst", api.ReplayRequest{To: "src"}); !isStatus(err, http.StatusUnprocessableEntity) {
+		t.Fatalf("want 422 replaying a non-persistent queue, got %v", err)
+	}
+}
+
+func TestRetentionConfigHTTP(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	c := client.New(srv.URL, key)
+	hour, zero := api.Duration(time.Hour), api.Duration(0)
+	if q, err := c.CreateQueue(ctx, "h", api.QueueConfig{Retention: &hour}); err != nil || q.Retention.D() != time.Hour {
+		t.Fatalf("retention 1h: %+v %v", q, err)
+	}
+	for name, cfg := range map[string]api.QueueConfig{
+		"zero": {Retention: &zero},
+		"both": {Retention: &hour, Persistent: true},
+	} {
+		if _, err := c.CreateQueue(ctx, name, cfg); !isStatus(err, http.StatusUnprocessableEntity) {
+			t.Fatalf("%s: want 422, got %v", name, err)
+		}
+	}
+	if _, err := c.SendWith(ctx, "h", []byte("x"), client.SendOptions{Delay: 2 * time.Hour}); !isStatus(err, http.StatusUnprocessableEntity) {
+		t.Fatalf("delay beyond retention: want 422, got %v", err)
 	}
 }
 

@@ -35,9 +35,9 @@ a network filesystem or a disk with a volatile write cache.
   directory (it is locked).
 - [ ] `-min-free-disk` above a few minutes of traffic (default 1GiB). Below it
   qsrv refuses new messages with `503 storage_full` instead of crashing.
-- [ ] Sized for retention: history is kept `retention` (default 90 days).
-  Roughly `messages/day × (body + ~200 B) × days`, plus the WAL. Lower
-  `retention` on high-volume queues that never need replay.
+- [ ] Sized for persistent queues: they keep every processed message until
+  the queue is deleted, roughly `messages/day × (body + ~200 B) × days`,
+  plus the WAL. Only make persistent the queues you need to replay.
 
 **Backups**
 - [ ] `-backup-dir` on **another disk**, or synced off the machine.
@@ -70,6 +70,9 @@ a network filesystem or a disk with a volatile write cache.
 
 **Queues**
 - [ ] Every queue with a `dead_letter_queue`, and someone watching it.
+- [ ] `retention` (default 14 days) longer than the longest outage of its
+  consumers you will tolerate: past it, waiting messages are deleted
+  unprocessed. `QsrvMessagesExpired` routed. Persistent queues never expire.
 - [ ] `visibility_timeout` above the slowest handler, or consumers extending
   the lease (Messenger: `--keepalive`).
 - [ ] `max_messages` on queues whose producers can outrun their consumers.

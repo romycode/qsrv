@@ -18,7 +18,7 @@ func TestPeekAndOverview(t *testing.T) {
 	admin := client.New(srv.URL, adminKey)
 
 	acme.CreateQueue(ctx, "dlq", api.QueueConfig{})
-	acme.CreateQueue(ctx, "orders", api.QueueConfig{DeadLetterQueue: "dlq", Retry: &api.RetryPolicy{MaxAttempts: 1}})
+	acme.CreateQueue(ctx, "orders", api.QueueConfig{DeadLetterQueue: "dlq", Retry: &api.RetryPolicy{MaxAttempts: 1}, Persistent: true})
 	acme.CreateTopic(ctx, "events", "orders")
 	globex.CreateQueue(ctx, "orders", api.QueueConfig{})
 

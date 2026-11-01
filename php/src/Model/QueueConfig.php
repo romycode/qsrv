@@ -22,8 +22,17 @@ final readonly class QueueConfig
         public ?string $ordering = null,
         /** Max live messages; sends beyond it fail with QueueFullException. 0 = unlimited. */
         public ?int $maxMessages = null,
-        /** How long processed messages are kept for replay. 0 = forever. */
+        /**
+         * How long a message may wait before it expires, deleted unprocessed.
+         * Server default: 14 days. Not allowed together with $persistent.
+         */
         public ?float $retention = null,
+        /**
+         * Never expire messages and keep processed ones as history for replay.
+         * Otherwise (default) a message is deleted when it is acked, dropped or
+         * dead-lettered.
+         */
+        public ?bool $persistent = null,
     ) {
     }
 
@@ -37,6 +46,7 @@ final readonly class QueueConfig
             'ordering' => $this->ordering,
             'max_messages' => $this->maxMessages,
             'retention' => null === $this->retention ? null : Time::duration($this->retention),
+            'persistent' => true === $this->persistent ? true : null,
         ], static fn ($v) => null !== $v);
     }
 
@@ -62,6 +72,7 @@ final readonly class QueueConfig
             ordering: isset($data['ordering']) && '' !== $data['ordering'] ? (string) $data['ordering'] : null,
             maxMessages: isset($data['max_messages']) ? (int) $data['max_messages'] : null,
             retention: $dur($data['retention'] ?? null),
+            persistent: isset($data['persistent']) ? filter_var($data['persistent'], \FILTER_VALIDATE_BOOL) : null,
         );
     }
 
@@ -91,6 +102,7 @@ final readonly class QueueConfig
         $cmp('ordering', $this->ordering, $actual->ordering ?? self::ORDERING_AVAILABLE, $str);
         $cmp('max_messages', $this->maxMessages, $actual->maxMessages ?? 0, $str);
         $cmp('retention', $this->retention, $actual->retention, $dur);
+        $cmp('persistent', $this->persistent, $actual->persistent ?? false, static fn (bool $v): string => $v ? 'true' : 'false');
         if (null !== $this->retry) {
             $have = $actual->retry ?? new RetryPolicy(0);
             $cmp('retry.max_attempts', $this->retry->maxAttempts, $have->maxAttempts, $str);

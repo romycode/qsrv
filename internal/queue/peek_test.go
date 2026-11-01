@@ -18,7 +18,7 @@ func ids(p PeekPage) []string {
 func TestPeek(t *testing.T) {
 	b := newTestBroker(t, nil)
 	dlq, _ := b.Create("dlq", Config{})
-	q, _ := b.Create("q", Config{Retry: RetryPolicy{MaxAttempts: 1}, DeadLetterQueue: "dlq"})
+	q, _ := b.Create("q", Config{Retry: RetryPolicy{MaxAttempts: 1}, DeadLetterQueue: "dlq", Persistent: true})
 
 	m1, _ := q.Send([]byte("one"), "g1")
 	m2, _ := q.Send([]byte("two"), "")

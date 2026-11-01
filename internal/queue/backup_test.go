@@ -23,7 +23,7 @@ func TestSnapshots(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(bdir, snapshotTmpPrefix+"20200101T000000Z")); !os.IsNotExist(err) {
 		t.Fatal("leftover temporary snapshot not removed")
 	}
-	a, _ := b.Create("acme/orders", Config{})
+	a, _ := b.Create("acme/orders", Config{Persistent: true})
 	g, _ := b.Create("globex/orders", Config{})
 	a.Send([]byte("a1"), "")
 	a.Ack(recv(t, a).LeaseID) // history is kept too

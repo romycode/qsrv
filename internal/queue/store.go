@@ -66,11 +66,56 @@ CREATE TABLE IF NOT EXISTS topics (
 // schemaVersion is stored in PRAGMA user_version. Bump it with every schema
 // change and add the step that upgrades from the previous version to
 // migrations; databases are upgraded when opened.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // migrations[v] upgrades a database from version v to v+1 (v >= 1), inside
 // the same transaction as the version bump.
-var migrations = map[int]func(*sql.Tx) error{}
+var migrations = map[int]func(*sql.Tx) error{
+	1: migratePersistent,
+}
+
+// migratePersistent (1 -> 2): before v2 every queue kept its processed
+// messages as history and never expired live ones. Existing queues become
+// persistent, which keeps exactly that (and their history) instead of
+// deleting on ack and expiring after 14 days.
+func migratePersistent(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT name, config FROM queues`)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		name string
+		cfg  []byte
+	}
+	var all []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.name, &r.cfg); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range all {
+		var cfg Config
+		if err := json.Unmarshal(r.cfg, &cfg); err != nil {
+			return fmt.Errorf("queue %s config: %w", r.name, err)
+		}
+		cfg.Persistent, cfg.Retention = true, 0
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE queues SET config = ? WHERE name = ?`, raw, r.name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func initSchema(db *sql.DB) error {
 	var v int
@@ -132,6 +177,7 @@ const (
 	opCopy        // replay: copy historical row as a new message into dst
 	opTopicSet    // create or replace a topic's subscriptions
 	opTopicDelete // delete a topic
+	opExpire      // live message past the queue's retention: deleted unprocessed
 )
 
 // op is one state change, applied by the writer in append order.
@@ -145,6 +191,7 @@ type op struct {
 	msg   msgRecord // insert: full row; move/copy: the new row in dst (no body)
 	dst   string    // move/copy
 	subs  []string  // topic set: subscribed queues (queue = topic name)
+	purge bool      // ack/drop/move: delete the row instead of keeping history
 }
 
 // store persists ops through a single writer goroutine that commits every
@@ -334,6 +381,10 @@ func apply(tx *sql.Tx, o *op) error {
 		res, err = tx.Exec(`UPDATE messages SET attempts = attempts + 1, state = ?, lease_id = ?, deadline = ?
 			WHERE queue = ? AND id = ?`, stateInFlight, o.lease, ns(o.at), o.queue, o.id)
 	case opAck, opDrop:
+		if o.purge {
+			res, err = tx.Exec(`DELETE FROM messages WHERE queue = ? AND id = ?`, o.queue, o.id)
+			break
+		}
 		st := stateAcked
 		if o.kind == opDrop {
 			st = stateDropped
@@ -359,6 +410,10 @@ func apply(tx *sql.Tx, o *op) error {
 		if err = expectOne(res, o); err != nil {
 			return err
 		}
+		if o.purge {
+			res, err = tx.Exec(`DELETE FROM messages WHERE queue = ? AND id = ?`, o.queue, o.id)
+			break
+		}
 		res, err = tx.Exec(`UPDATE messages SET state = ?, lease_id = '', deadline = 0, done_at = ?, moved_to = ?
 			WHERE queue = ? AND id = ?`, stateDeadLettered, ns(m.EnqueuedAt), o.dst, o.queue, o.id)
 	case opCopy:
@@ -366,6 +421,8 @@ func apply(tx *sql.Tx, o *op) error {
 		res, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of)
 			SELECT ?, ?, ?, group_id, body, ?, 0, id FROM messages WHERE queue = ? AND id = ?`,
 			o.dst, m.ID, m.Seq, ns(m.EnqueuedAt), o.queue, o.id)
+	case opExpire:
+		res, err = tx.Exec(`DELETE FROM messages WHERE queue = ? AND id = ?`, o.queue, o.id)
 	case opTopicSet:
 		var subs []byte
 		if subs, err = json.Marshal(o.subs); err != nil {

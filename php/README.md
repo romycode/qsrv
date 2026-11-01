@@ -96,7 +96,8 @@ framework:
                             multiplier: 2               # 1s, 2s, 4s, 8s
                             max_backoff: 1m
                         dead_letter_queue: app-async-dlq
-                        retention: 2160h
+                        retention: 336h                 # unprocessed messages expire after this (default 14 days)
+                        # persistent: true              # instead: never expire, keep processed messages for replay
         routing:
             App\Message\SendEmail: async
 ```
@@ -174,7 +175,7 @@ again, or create a new queue and point the transport at it.
 | option | default | |
 |---|---|---|
 | `native_retries` | `true` | who retries failures: qsrv (`true`) or Symfony (`false`). See above |
-| `queue_config` | qsrv defaults | settings to create the queue with: `visibility_timeout`, `retry` (`false`, or `max_attempts`, `initial_backoff`, `max_backoff`, `multiplier`), `dead_letter_queue` (created too), `ordering`, `max_messages`, `retention`. Durations as `30s` or seconds. Options only, not the DSN |
+| `queue_config` | qsrv defaults | settings to create the queue with: `visibility_timeout`, `retry` (`false`, or `max_attempts`, `initial_backoff`, `max_backoff`, `multiplier`), `dead_letter_queue` (created too), `ordering`, `max_messages`, `retention`, `persistent`. Durations as `30s` or seconds. Options only, not the DSN |
 | `queue` | DSN path | queue name |
 | `api_key` | DSN user | API key |
 | `wait_time` | `5` | seconds a worker long-polls per fetch (0-20) |

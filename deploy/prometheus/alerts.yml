@@ -77,7 +77,14 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.queue }}: {{ $value | humanize }} messages {{ $labels.event }} in 15m"
-          description: "Messages exhausted their retries. dropped = no DLQ configured; they are only in history (replayable)."
+          description: "Messages exhausted their retries. dropped = no DLQ configured; they are deleted (kept as replayable history only in persistent queues)."
+
+      - alert: QsrvMessagesExpired
+        expr: sum by (queue) (increase(qsrv_messages_total{event="retention_expired"}[15m])) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.queue }}: {{ $value | humanize }} messages expired unprocessed in 15m"
+          description: "They waited longer than the queue's retention and were deleted. Consumers are down or too slow; QsrvMessagesTooOld should have fired before."
 
       - alert: QsrvDLQNotEmpty
         expr: |
@@ -132,7 +139,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "qsrv data disk {{ $value | humanizePercentage }} free"
-          description: "Below -min-free-disk qsrv refuses sends (503 storage_full). Lower retention, purge history or grow the volume."
+          description: "Below -min-free-disk qsrv refuses sends (503 storage_full). Drain backlogs, delete unused persistent queues or grow the volume."
 
       - alert: QsrvDiskSpaceCritical
         expr: qsrv_disk_free_bytes / qsrv_disk_size_bytes < 0.05
@@ -147,7 +154,7 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "qsrv is refusing sends: free disk below -min-free-disk"
-          description: "Producers get 503 storage_full; consumers keep draining. Free space (grow the volume, lower retention, delete old snapshots) and sends resume within seconds."
+          description: "Producers get 503 storage_full; consumers keep draining. Free space (grow the volume, delete unused persistent queues or old snapshots) and sends resume within seconds."
 
       - alert: QsrvBackupStale
         # No complete snapshot in two intervals (or none since start). Only

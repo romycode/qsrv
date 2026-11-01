@@ -8,6 +8,24 @@ API or the data format (always called out here).
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **Ack deletes the message.** So do `dropped` and dead-lettering (the copy
+  in the DLQ stays). Processed messages are kept as history, for replay and
+  the admin UI, only in **persistent** queues: new queue setting
+  `"persistent": true` (`qctl create -persistent`, PHP
+  `QueueConfig(persistent: true)`), off by default.
+- **`retention` now expires waiting messages**: a message still in the
+  queue `retention` after it was enqueued is deleted unprocessed. Default
+  14 days (was 90 days of history), minimum `1m`. Persistent queues never
+  expire and take no `retention` (both is `422`); `"retention": "0s"` is no
+  longer "forever" but a `422`: use `persistent`.
+- A delay must be shorter than the queue's retention (`422`).
+- Replay only reads persistent queues (`422` for others).
+- Schema version 2. On upgrade, existing queues become persistent, so they
+  keep their history and behave as before (minus the history purge). A
+  `-restore-tenant` from a version 1 snapshot is refused: restore the whole
+  server from it, or restore it with v0.1.0 and then upgrade.
+
 ### Added
 - Admin UI at `/admin/` (on by default; `-admin=false` turns it off): queues
   and topics of every tenant or of one, with live counts, oldest message age
@@ -28,6 +46,8 @@ API or the data format (always called out here).
   keys; `make up`, `down`, `status`, `logs`, `keys`, `add-key` (live,
   without a restart). `make help` for the rest.
 - `QSRV_BACKUP_KEEP` environment variable for `-backup-keep`.
+- `qsrv_messages_total{event="retention_expired"}`, the `QsrvMessagesExpired`
+  alert (critical) and the event in the Grafana failure panels.
 - The Docker image has a `/backup` directory owned by its user: a volume
   mounted there for `-backup-dir` is writable without a `chown`.
 

@@ -120,7 +120,7 @@ final class RetryIntegrationTest extends IntegrationTestCase
         self::assertSame([1, 2, 3], array_column($this->log, 'attempts'), 'qsrv counts the attempts');
         self::assertCount(1, array_unique(array_column($this->log, 'id')), 'same qsrv message every time: no copies');
         $stats = $this->client->getQueue($q)->stats;
-        self::assertSame([0, 1], [$stats->messages, $stats->history], 'one message, acked');
+        self::assertSame([0, 0], [$stats->messages, $stats->history], 'one message, acked (deleted)');
     }
 
     public function testNativeRetriesEndInTheDeadLetterQueue(): void
@@ -192,7 +192,7 @@ final class RetryIntegrationTest extends IntegrationTestCase
         self::assertSame([1, 1], array_column($this->log, 'attempts'), 'each try is a fresh qsrv message');
         self::assertCount(2, array_unique(array_column($this->log, 'id')));
         $stats = $this->client->getQueue($q)->stats;
-        self::assertSame([0, 2], [$stats->messages, $stats->history], 'original acked, retry acked');
+        self::assertSame([0, 0], [$stats->messages, $stats->history], 'original acked, retry acked (both deleted)');
     }
 
     public function testSymfonyRetriesMoveTheMessageToTheEndOfItsGroup(): void
