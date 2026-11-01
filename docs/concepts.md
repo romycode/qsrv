@@ -29,6 +29,12 @@ Messages are opaque bytes (up to `-max-message-bytes`, 256 KiB by default).
 UTF-8 bodies travel as `body`, anything else as `body_base64`; clients handle
 that for you.
 
+A message can also carry **attributes**: string metadata apart from the body,
+up to 16 keys and 4 KiB. They are for what infrastructure reads without
+decoding the body: trace context (W3C `traceparent` and `tracestate`), a
+content type, a correlation id. Receive returns them; retries,
+dead-lettering, topic copies and replay keep them as they were sent.
+
 ## Leases: receive, ack, nack, extend
 
 Receiving a message does not remove it: it **leases** it for the queue's

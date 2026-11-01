@@ -56,6 +56,7 @@ their group); `history` counts processed messages kept for replay (always
 ```sh
 qs $Q/v1/queues/orders/messages -d '{"body": "{\"order_id\":1}", "group_id": "customer-42"}'
 qs $Q/v1/queues/orders/messages -d '{"body_base64": "AAEC", "delay": "30s"}'
+qs $Q/v1/queues/orders/messages -d '{"body": "x", "attributes": {"traceparent": "00-4bf9…-00f0…-01"}}'
 ```
 
 | field | |
@@ -63,8 +64,9 @@ qs $Q/v1/queues/orders/messages -d '{"body_base64": "AAEC", "delay": "30s"}'
 | `body` / `body_base64` | exactly one: UTF-8 text, or any bytes base64-encoded |
 | `group_id` | optional ordering group (max 128 bytes) |
 | `delay` | optional, up to `720h` |
+| `attributes` | optional string map: up to 16 keys (`[A-Za-z0-9._-]`, max 64 chars, starting with a letter or digit), 4096 bytes of keys and values in total. Bad attributes are `422` |
 
-Returns the message (`id`, `enqueued_at`, ...). `429 queue_full` when
+Returns the message (`id`, `enqueued_at`, `attributes`, ...). `429 queue_full` when
 `max_messages` is reached; `413` over `-max-message-bytes`.
 
 ### Receive: `POST /v1/queues/{name}/receive?wait=20s` → `200` or `204`

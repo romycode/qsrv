@@ -111,7 +111,7 @@ func toAPIQueue(sc scope, q *queue.Queue) api.Queue {
 
 func toAPIMessage(m queue.Message) api.Message {
 	text, raw := api.EncodeBody(m.Body)
-	return api.Message{ID: m.ID, GroupID: m.GroupID, Body: text, BodyBase64: raw, Attempts: m.Attempts, EnqueuedAt: m.EnqueuedAt, ReplayOf: m.ReplayOf}
+	return api.Message{ID: m.ID, GroupID: m.GroupID, Body: text, BodyBase64: raw, Attempts: m.Attempts, EnqueuedAt: m.EnqueuedAt, ReplayOf: m.ReplayOf, Attributes: m.Attributes}
 }
 
 // --- handlers ---
@@ -212,7 +212,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	m, err := q.SendDelayed(body, in.GroupID, in.Delay.D())
+	m, err := q.SendWith(body, queue.SendOptions{GroupID: in.GroupID, Delay: in.Delay.D(), Attributes: in.Attributes})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -364,7 +364,7 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	pub, err := s.b.Publish(topic, body, in.GroupID, in.Delay.D())
+	pub, err := s.b.PublishWith(topic, body, queue.SendOptions{GroupID: in.GroupID, Delay: in.Delay.D(), Attributes: in.Attributes})
 	if err != nil {
 		writeScopedErr(w, sc, err)
 		return

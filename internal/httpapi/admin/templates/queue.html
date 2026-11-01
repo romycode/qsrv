@@ -103,6 +103,9 @@
           <div x-show="selected.moved_to"><dt>Moved to</dt><dd><a :href="queueURL(selected.moved_to || '')" x-text="selected.moved_to"></a></dd></div>
           <div x-show="selected.replay_of"><dt>Replay of</dt><dd class="mono" x-text="selected.replay_of"></dd></div>
           <div><dt>Size</dt><dd x-text="fmtBytes(selected.size)"></dd></div>
+          <template x-for="[k, v] in Object.entries(selected.attributes || {})" :key="k">
+            <div><dt class="mono" x-text="k"></dt><dd class="mono" x-text="v"></dd></div>
+          </template>
         </dl>
         <div class="body-head">
           <h3 x-text="bodyKind()"></h3>

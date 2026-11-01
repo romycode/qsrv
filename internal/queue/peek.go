@@ -51,6 +51,7 @@ type MessageInfo struct {
 	MovedTo        string    // dead_lettered: the dead letter queue
 	ReplayOf       string
 	Size           int // body bytes
+	Attributes     Attributes
 }
 
 // PeekRequest selects a page of messages. Live messages come oldest first;
@@ -164,7 +165,7 @@ func stateByName(n string) (msgState, bool) {
 
 func contains(xs []string, x string) bool { return slices.Contains(xs, x) }
 
-const peekCols = `id, group_id, seq, state, attempts, enqueued_at, available_at, deadline, done_at, moved_to, replay_of, length(body)`
+const peekCols = `id, group_id, seq, state, attempts, enqueued_at, available_at, deadline, done_at, moved_to, replay_of, length(body), attributes`
 
 // scanInfo scans the peekCols columns, then extra destinations.
 func scanInfo(sc interface{ Scan(...any) error }, extra ...any) (MessageInfo, error) {
@@ -172,11 +173,17 @@ func scanInfo(sc interface{ Scan(...any) error }, extra ...any) (MessageInfo, er
 		m                            MessageInfo
 		st                           msgState
 		enq, avail, deadline, doneAt int64
+		attrs                        string
 	)
-	dest := append([]any{&m.ID, &m.GroupID, &m.Seq, &st, &m.Attempts, &enq, &avail, &deadline, &doneAt, &m.MovedTo, &m.ReplayOf, &m.Size}, extra...)
+	dest := append([]any{&m.ID, &m.GroupID, &m.Seq, &st, &m.Attempts, &enq, &avail, &deadline, &doneAt, &m.MovedTo, &m.ReplayOf, &m.Size, &attrs}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return m, err
 	}
+	a, err := decodeAttributes(attrs)
+	if err != nil {
+		return m, err
+	}
+	m.Attributes = a
 	m.State = StateNames[st]
 	m.EnqueuedAt, m.DoneAt = fromNS(enq), fromNS(doneAt)
 	if st == stateDelayed {

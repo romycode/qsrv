@@ -66,12 +66,19 @@ CREATE TABLE IF NOT EXISTS topics (
 // schemaVersion is stored in PRAGMA user_version. Bump it with every schema
 // change and add the step that upgrades from the previous version to
 // migrations; databases are upgraded when opened.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migrations[v] upgrades a database from version v to v+1 (v >= 1), inside
 // the same transaction as the version bump.
 var migrations = map[int]func(*sql.Tx) error{
 	1: migratePersistent,
+	2: migrateAttributes,
+}
+
+// migrateAttributes (2 -> 3): messages carry attributes (JSON, ” = none).
+func migrateAttributes(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE messages ADD COLUMN attributes TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 // migratePersistent (1 -> 2): before v2 every queue kept its processed
@@ -160,6 +167,7 @@ type msgRecord struct {
 	LeaseID     string
 	Deadline    time.Time
 	ReplayOf    string
+	Attributes  string // encoded (Attributes.encode)
 }
 
 type opKind uint8
@@ -374,8 +382,8 @@ func apply(tx *sql.Tx, o *op) error {
 		return err
 	case opInsert:
 		m := &o.msg
-		_, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, available_at, replay_of)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.queue, m.ID, m.Seq, m.GroupID, m.Body, ns(m.EnqueuedAt), m.State, ns(m.AvailableAt), m.ReplayOf)
+		_, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, available_at, replay_of, attributes)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.queue, m.ID, m.Seq, m.GroupID, m.Body, ns(m.EnqueuedAt), m.State, ns(m.AvailableAt), m.ReplayOf, m.Attributes)
 		return err
 	case opDeliver:
 		res, err = tx.Exec(`UPDATE messages SET attempts = attempts + 1, state = ?, lease_id = ?, deadline = ?
@@ -402,8 +410,8 @@ func apply(tx *sql.Tx, o *op) error {
 		res, err = tx.Exec(`UPDATE messages SET deadline = ? WHERE queue = ? AND id = ?`, ns(o.at), o.queue, o.id)
 	case opMove:
 		m := &o.msg
-		if res, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of)
-			SELECT ?, id, ?, group_id, body, ?, 0, replay_of FROM messages WHERE queue = ? AND id = ?`,
+		if res, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of, attributes)
+			SELECT ?, id, ?, group_id, body, ?, 0, replay_of, attributes FROM messages WHERE queue = ? AND id = ?`,
 			o.dst, m.Seq, ns(m.EnqueuedAt), o.queue, o.id); err != nil {
 			return err
 		}
@@ -418,8 +426,8 @@ func apply(tx *sql.Tx, o *op) error {
 			WHERE queue = ? AND id = ?`, stateDeadLettered, ns(m.EnqueuedAt), o.dst, o.queue, o.id)
 	case opCopy:
 		m := &o.msg
-		res, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of)
-			SELECT ?, ?, ?, group_id, body, ?, 0, id FROM messages WHERE queue = ? AND id = ?`,
+		res, err = tx.Exec(`INSERT INTO messages(queue, id, seq, group_id, body, enqueued_at, state, replay_of, attributes)
+			SELECT ?, ?, ?, group_id, body, ?, 0, id, attributes FROM messages WHERE queue = ? AND id = ?`,
 			o.dst, m.ID, m.Seq, ns(m.EnqueuedAt), o.queue, o.id)
 	case opExpire:
 		res, err = tx.Exec(`DELETE FROM messages WHERE queue = ? AND id = ?`, o.queue, o.id)
@@ -573,10 +581,17 @@ func (s *store) loadTopics() (map[string][]string, error) {
 	return out, rows.Err()
 }
 
-func (s *store) body(queue, id string) ([]byte, error) {
-	var b []byte
-	err := s.r.QueryRow(`SELECT body FROM messages WHERE queue = ? AND id = ?`, queue, id).Scan(&b)
-	return b, err
+// body reads what a delivery carries besides the in-memory metadata.
+func (s *store) body(queue, id string) ([]byte, Attributes, error) {
+	var (
+		b   []byte
+		raw string
+	)
+	if err := s.r.QueryRow(`SELECT body, attributes FROM messages WHERE queue = ? AND id = ?`, queue, id).Scan(&b, &raw); err != nil {
+		return nil, nil, err
+	}
+	a, err := decodeAttributes(raw)
+	return b, a, err
 }
 
 func (s *store) historyCount(queue string) int {

@@ -80,6 +80,9 @@ type Message struct {
 	Attempts   int // deliveries so far
 	EnqueuedAt time.Time
 	ReplayOf   string // original message id when created by a replay
+	// Attributes are set on the copies returned by send, publish and
+	// receive; live messages don't keep them in memory.
+	Attributes Attributes
 
 	seq         uint64
 	done        bool // removed from the queue (acked/dropped/dead-lettered)
@@ -165,14 +168,30 @@ func (q *Queue) Name() string   { return q.name }
 func (q *Queue) Config() Config { return q.cfg }
 
 func (q *Queue) Send(body []byte, groupID string) (Message, error) {
-	return q.SendDelayed(body, groupID, 0)
+	return q.SendWith(body, SendOptions{GroupID: groupID})
 }
 
 // SendDelayed enqueues a message that becomes deliverable after delay. Its
 // FIFO position is still its send order. In a group it also waits for the
 // messages before it: it is delivered once it is the group head and due.
 func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (Message, error) {
+	return q.SendWith(body, SendOptions{GroupID: groupID, Delay: delay})
+}
+
+// SendOptions are the optional parameters of a send or publish.
+type SendOptions struct {
+	GroupID    string
+	Delay      time.Duration
+	Attributes Attributes
+}
+
+// SendWith enqueues body with options (see SendDelayed for delays).
+func (q *Queue) SendWith(body []byte, o SendOptions) (Message, error) {
+	groupID, delay := o.GroupID, o.Delay
 	if err := validateSend(groupID, delay); err != nil {
+		return Message{}, err
+	}
+	if err := ValidateAttributes(o.Attributes); err != nil {
 		return Message{}, err
 	}
 	if !q.cfg.Persistent && delay >= q.cfg.Retention {
@@ -190,10 +209,11 @@ func (q *Queue) SendDelayed(body []byte, groupID string, delay time.Duration) (M
 		q.b.persist.RUnlock()
 		return Message{}, err
 	}
-	m, rec := q.newMessageLocked(body, groupID, delay, q.b.clock.Now())
+	m, rec := q.newMessageLocked(body, groupID, delay, q.b.clock.Now(), o.Attributes)
 	pos := q.st.append(op{kind: opInsert, queue: q.name, msg: rec})
 	q.addLocked(m)
 	out := m.public()
+	out.Attributes = o.Attributes.clone()
 	q.mu.Unlock()
 	q.b.persist.RUnlock()
 
@@ -223,10 +243,10 @@ func (q *Queue) acceptLocked(n int) error {
 
 // newMessageLocked builds a new message and its insert record. The caller
 // appends the record to the store and then calls addLocked.
-func (q *Queue) newMessageLocked(body []byte, groupID string, delay time.Duration, now time.Time) (*Message, msgRecord) {
+func (q *Queue) newMessageLocked(body []byte, groupID string, delay time.Duration, now time.Time, attrs Attributes) (*Message, msgRecord) {
 	q.seq++
 	m := &Message{ID: newID(), GroupID: groupID, EnqueuedAt: now, seq: q.seq}
-	rec := msgRecord{ID: m.ID, GroupID: groupID, Body: body, EnqueuedAt: now, Seq: m.seq}
+	rec := msgRecord{ID: m.ID, GroupID: groupID, Body: body, EnqueuedAt: now, Seq: m.seq, Attributes: attrs.encode()}
 	if delay > 0 {
 		m.availableAt = now.Add(delay)
 		rec.State, rec.AvailableAt = stateDelayed, m.availableAt
@@ -255,12 +275,12 @@ func (q *Queue) Receive(ctx context.Context, wait time.Duration) (Delivery, erro
 			// Durable before handing out. Ops commit in order, so this also
 			// persists the ack that unblocked this message's group.
 			q.st.sync()
-			body, err := q.st.body(q.name, d.Message.ID)
+			body, attrs, err := q.st.body(q.name, d.Message.ID)
 			if err != nil {
 				// Lease stays; it will expire and the message is retried.
 				return Delivery{}, fmt.Errorf("load body %s/%s: %w", q.name, d.Message.ID, err)
 			}
-			d.Message.Body = body
+			d.Message.Body, d.Message.Attributes = body, attrs
 			q.b.hooks.Event(q.name, EvDelivered, 1)
 			if d.Message.Attempts > 1 {
 				q.b.hooks.Event(q.name, EvRedelivered, 1)

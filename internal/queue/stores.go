@@ -91,9 +91,9 @@ func RestoreTenant(dataDir, snapshotDir, tenant string) (RestoreResult, error) {
 		{&r.Topics, `INSERT INTO main.topics(name, queues, created_at)
 			SELECT name, queues, created_at FROM snap.topics WHERE name >= ? AND name < ?`},
 		{&r.Messages, `INSERT INTO main.messages(queue, id, seq, group_id, body, enqueued_at, attempts,
-				state, available_at, lease_id, deadline, done_at, moved_to, replay_of)
+				state, available_at, lease_id, deadline, done_at, moved_to, replay_of, attributes)
 			SELECT queue, id, seq, group_id, body, enqueued_at, attempts,
-				state, available_at, lease_id, deadline, done_at, moved_to, replay_of
+				state, available_at, lease_id, deadline, done_at, moved_to, replay_of, attributes
 			FROM snap.messages WHERE queue >= ? AND queue < ? ORDER BY pk`},
 	}
 	for _, st := range steps {

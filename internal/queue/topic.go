@@ -170,7 +170,16 @@ func (b *Broker) updateSubs(topic string, fn func([]string) ([]string, error)) (
 // with no subscriptions accepts the message and drops it. groupID and delay
 // apply in each queue as for Send.
 func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.Duration) ([]Published, error) {
+	return b.PublishWith(topic, body, SendOptions{GroupID: groupID, Delay: delay})
+}
+
+// PublishWith is Publish with options; every copy carries the attributes.
+func (b *Broker) PublishWith(topic string, body []byte, o SendOptions) ([]Published, error) {
+	groupID, delay := o.GroupID, o.Delay
 	if err := validateSend(groupID, delay); err != nil {
+		return nil, err
+	}
+	if err := ValidateAttributes(o.Attributes); err != nil {
 		return nil, err
 	}
 	if err := b.checkDisk(); err != nil {
@@ -217,7 +226,7 @@ func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.D
 	msgs := make([]*Message, len(queues))
 	ops := make([]op, len(queues))
 	for i, q := range queues {
-		m, rec := q.newMessageLocked(body, groupID, delay, now)
+		m, rec := q.newMessageLocked(body, groupID, delay, now, o.Attributes)
 		msgs[i], ops[i] = m, op{kind: opInsert, queue: q.name, msg: rec}
 	}
 	st := b.store
@@ -227,6 +236,7 @@ func (b *Broker) Publish(topic string, body []byte, groupID string, delay time.D
 		q.addLocked(msgs[i])
 		out[i] = Published{Queue: q.name, Message: msgs[i].public()}
 		out[i].Message.Body = body
+		out[i].Message.Attributes = o.Attributes.clone()
 	}
 	unlock()
 

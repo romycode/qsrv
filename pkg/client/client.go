@@ -143,13 +143,15 @@ func (c *Client) Send(ctx context.Context, queue string, body []byte, groupID st
 type SendOptions struct {
 	GroupID string        // ordering group ("" = none)
 	Delay   time.Duration // deliverable only after this long (max 720h)
+	// Attributes travel with the message (up to 16, 4096 bytes in total).
+	Attributes map[string]string
 }
 
 // SendWith enqueues body with options.
 func (c *Client) SendWith(ctx context.Context, queue string, body []byte, o SendOptions) (api.Message, error) {
 	text, raw := api.EncodeBody(body)
 	var out api.Message
-	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay)}
+	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay), Attributes: o.Attributes}
 	err := c.do(ctx, http.MethodPost, qpath(queue, "/messages"), in, &out)
 	return out, err
 }
@@ -247,7 +249,7 @@ func (c *Client) Unsubscribe(ctx context.Context, topic, queue string) (api.Topi
 func (c *Client) Publish(ctx context.Context, topic string, body []byte, o SendOptions) ([]api.PublishedMessage, error) {
 	text, raw := api.EncodeBody(body)
 	var out api.PublishResponse
-	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay)}
+	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay), Attributes: o.Attributes}
 	err := c.do(ctx, http.MethodPost, tpath(topic, "/messages"), in, &out)
 	return out.Messages, err
 }
