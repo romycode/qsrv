@@ -368,3 +368,33 @@ func TestStorageFull(t *testing.T) {
 		t.Fatalf("client: %v", err)
 	}
 }
+
+func TestAttributesHTTP(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	c := client.New(srv.URL, key)
+	c.CreateQueue(ctx, "a", api.QueueConfig{})
+	c.CreateQueue(ctx, "b", api.QueueConfig{})
+	c.CreateTopic(ctx, "t", "b")
+	attrs := map[string]string{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+
+	m, err := c.SendWith(ctx, "a", []byte("x"), client.SendOptions{Attributes: attrs})
+	if err != nil || m.Attributes["traceparent"] != attrs["traceparent"] {
+		t.Fatalf("send: %+v %v", m, err)
+	}
+	if d, _ := c.Receive(ctx, "a", 0); d == nil || d.Message.Attributes["traceparent"] != attrs["traceparent"] {
+		t.Fatalf("receive: %+v", d)
+	}
+	if info, err := c.PeekMessage(ctx, "a", m.ID); err != nil || info.Attributes["traceparent"] != attrs["traceparent"] {
+		t.Fatalf("peek: %+v %v", info, err)
+	}
+	if _, err := c.Publish(ctx, "t", []byte("e"), client.SendOptions{Attributes: attrs}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := c.Receive(ctx, "b", 0); d == nil || d.Message.Attributes["traceparent"] != attrs["traceparent"] {
+		t.Fatalf("published copy: %+v", d)
+	}
+	if _, err := c.SendWith(ctx, "a", []byte("x"), client.SendOptions{Attributes: map[string]string{"bad name": "v"}}); !isStatus(err, http.StatusUnprocessableEntity) {
+		t.Fatalf("bad attribute: want 422, got %v", err)
+	}
+}

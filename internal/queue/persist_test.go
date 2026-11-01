@@ -414,6 +414,9 @@ func TestMigrateV1QueuesBecomePersistent(t *testing.T) {
 	if _, err := db.Exec(`UPDATE queues SET config = '{"VisibilityTimeout":30000000000,"Retention":7776000000000000}'`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`ALTER TABLE messages DROP COLUMN attributes`); err != nil { // added in v3
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
 		t.Fatal(err)
 	}

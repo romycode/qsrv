@@ -129,7 +129,7 @@ Docs: [php/README.md](php/README.md). Runnable examples:
 
 ```sh
 qctl queues | info NAME | create [flags] NAME | delete NAME
-qctl send [-group G] [-delay D] QUEUE [BODY|-]
+qctl send [-group G] [-delay D] [-attr K=V] QUEUE [BODY|-]
 qctl recv [-wait D] [-ack] [-raw] QUEUE         # exit 3 if empty
 qctl ack|nack QUEUE LEASE   ·   qctl extend [-by D] QUEUE LEASE
 qctl consume -concurrency 8 QUEUE -- ./handler.sh   # stdin = body; exit 0 = ack, else nack

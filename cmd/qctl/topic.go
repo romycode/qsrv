@@ -85,9 +85,11 @@ func cmdTopic(ctx context.Context, c *client.Client, args []string) error {
 		fs := flag.NewFlagSet("topic publish", flag.ExitOnError)
 		group := fs.String("group", "", "ordering group id (applies in each queue)")
 		delay := fs.Duration("delay", 0, "deliverable only after this long (max 720h)")
+		attrs := attrFlag{}
+		fs.Var(attrs, "attr", "attribute KEY=VALUE (repeatable)")
 		fs.Parse(args)
 		if fs.NArg() < 1 || fs.NArg() > 2 {
-			return errors.New("usage: qctl topic publish [-group G] [-delay D] NAME [BODY|-]")
+			return errors.New("usage: qctl topic publish [-group G] [-delay D] [-attr K=V]... NAME [BODY|-]")
 		}
 		var body []byte
 		if fs.NArg() == 2 && fs.Arg(1) != "-" {
@@ -99,7 +101,7 @@ func cmdTopic(ctx context.Context, c *client.Client, args []string) error {
 			}
 			body = b
 		}
-		pub, err := c.Publish(ctx, fs.Arg(0), body, client.SendOptions{GroupID: *group, Delay: *delay})
+		pub, err := c.Publish(ctx, fs.Arg(0), body, client.SendOptions{GroupID: *group, Delay: *delay, Attributes: attrs.get()})
 		if err != nil {
 			return err
 		}

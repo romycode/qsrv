@@ -74,13 +74,14 @@ type MessageInfo struct {
 	State    string `json:"state"` // ready, delayed, in_flight | acked, dropped, dead_lettered
 	Attempts int    `json:"attempts"`
 	// Body size in bytes.
-	Size           int        `json:"size"`
-	EnqueuedAt     time.Time  `json:"enqueued_at"`
-	AvailableAt    *time.Time `json:"available_at,omitempty"`     // delayed
-	LeaseExpiresAt *time.Time `json:"lease_expires_at,omitempty"` // in_flight
-	DoneAt         *time.Time `json:"done_at,omitempty"`          // processed
-	MovedTo        string     `json:"moved_to,omitempty"`         // dead_lettered: the DLQ
-	ReplayOf       string     `json:"replay_of,omitempty"`
+	Size           int               `json:"size"`
+	EnqueuedAt     time.Time         `json:"enqueued_at"`
+	AvailableAt    *time.Time        `json:"available_at,omitempty"`     // delayed
+	LeaseExpiresAt *time.Time        `json:"lease_expires_at,omitempty"` // in_flight
+	DoneAt         *time.Time        `json:"done_at,omitempty"`          // processed
+	MovedTo        string            `json:"moved_to,omitempty"`         // dead_lettered: the DLQ
+	ReplayOf       string            `json:"replay_of,omitempty"`
+	Attributes     map[string]string `json:"attributes,omitempty"`
 	// Set only when peeking one message.
 	Body       *string `json:"body,omitempty"`
 	BodyBase64 []byte  `json:"body_base64,omitempty"`
@@ -126,6 +127,10 @@ type SendRequest struct {
 	GroupID    string  `json:"group_id,omitempty"`
 	// Delay makes the message deliverable only after this long (max 720h).
 	Delay Duration `json:"delay,omitempty"`
+	// Attributes: string metadata carried with the message (trace context,
+	// content type...). Up to 16 keys ([A-Za-z0-9._-], max 64 chars),
+	// 4096 bytes in total.
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // Message: Body is set when the payload is valid UTF-8, BodyBase64 otherwise.
@@ -137,6 +142,8 @@ type Message struct {
 	Attempts   int       `json:"attempts"`
 	EnqueuedAt time.Time `json:"enqueued_at"`
 	ReplayOf   string    `json:"replay_of,omitempty"` // original id if this is a replayed copy
+	// Attributes as sent; kept through retries, dead-lettering and replay.
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // Bytes returns the payload regardless of how it was encoded.

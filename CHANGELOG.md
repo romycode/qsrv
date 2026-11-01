@@ -27,6 +27,11 @@ API or the data format (always called out here).
   server from it, or restore it with v0.1.0 and then upgrade.
 
 ### Added
+- Message **attributes**: up to 16 string key/values (4 KiB) sent with a
+  message (`attributes` in send and publish, `qctl send -attr K=V`, Go
+  `SendOptions.Attributes`) and returned by receive and peek. Kept through
+  retries, dead-lettering, topic fan-out and replay. For trace context
+  (`traceparent`), content types, correlation ids. Schema version 3.
 - Admin UI at `/admin/` (on by default; `-admin=false` turns it off): queues
   and topics of every tenant or of one, with live counts, oldest message age
   and dead letters; per queue its settings and its messages, live and

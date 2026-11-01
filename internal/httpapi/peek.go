@@ -25,7 +25,7 @@ func toAPIInfo(sc scope, m queue.MessageInfo) api.MessageInfo {
 	return api.MessageInfo{
 		ID: m.ID, GroupID: m.GroupID, Seq: m.Seq, State: m.State, Attempts: m.Attempts, Size: m.Size,
 		EnqueuedAt: m.EnqueuedAt, AvailableAt: timePtr(m.AvailableAt), LeaseExpiresAt: timePtr(m.LeaseExpiresAt),
-		DoneAt: timePtr(m.DoneAt), MovedTo: sc.local(m.MovedTo), ReplayOf: m.ReplayOf,
+		DoneAt: timePtr(m.DoneAt), MovedTo: sc.local(m.MovedTo), ReplayOf: m.ReplayOf, Attributes: m.Attributes,
 	}
 }
 

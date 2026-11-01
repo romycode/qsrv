@@ -186,9 +186,11 @@ func cmdSend(ctx context.Context, c *client.Client, args []string) error {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	group := fs.String("group", "", "ordering group id")
 	delay := fs.Duration("delay", 0, "deliverable only after this long (max 720h)")
+	attrs := attrFlag{}
+	fs.Var(attrs, "attr", "attribute KEY=VALUE (repeatable)")
 	fs.Parse(args)
 	if fs.NArg() < 1 || fs.NArg() > 2 {
-		return errors.New("usage: qctl send [-group G] [-delay D] QUEUE [BODY|-]")
+		return errors.New("usage: qctl send [-group G] [-delay D] [-attr K=V]... QUEUE [BODY|-]")
 	}
 	var body []byte
 	if fs.NArg() == 2 && fs.Arg(1) != "-" {
@@ -200,7 +202,7 @@ func cmdSend(ctx context.Context, c *client.Client, args []string) error {
 		}
 		body = b
 	}
-	m, err := c.SendWith(ctx, fs.Arg(0), body, client.SendOptions{GroupID: *group, Delay: *delay})
+	m, err := c.SendWith(ctx, fs.Arg(0), body, client.SendOptions{GroupID: *group, Delay: *delay, Attributes: attrs.get()})
 	if err != nil {
 		return err
 	}
@@ -476,4 +478,25 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// attrFlag collects repeated -attr KEY=VALUE flags.
+type attrFlag map[string]string
+
+func (a attrFlag) String() string { return "" }
+
+func (a attrFlag) Set(v string) error {
+	k, val, ok := strings.Cut(v, "=")
+	if !ok || k == "" {
+		return fmt.Errorf("attribute %q: want KEY=VALUE", v)
+	}
+	a[k] = val
+	return nil
+}
+
+func (a attrFlag) get() map[string]string {
+	if len(a) == 0 {
+		return nil
+	}
+	return a
 }
