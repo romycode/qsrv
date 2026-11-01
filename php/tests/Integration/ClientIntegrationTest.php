@@ -51,7 +51,7 @@ final class ClientIntegrationTest extends IntegrationTestCase
         self::assertNull($this->client->receive($q));
         $stats = $this->client->getQueue($q)->stats;
         self::assertSame(0, $stats->messages);
-        self::assertSame(1, $stats->history);
+        self::assertSame(0, $stats->history, 'ack deletes: the queue is not persistent');
 
         $this->client->deleteQueue($q);
         $this->expectException(NotFoundException::class);
@@ -76,9 +76,9 @@ final class ClientIntegrationTest extends IntegrationTestCase
         $again = $this->client->receive($q);
         self::assertSame(2, $again?->message->attempts);
 
-        $this->client->nack($q, $again->leaseId, deadLetter: true); // no DLQ: dropped into history
+        $this->client->nack($q, $again->leaseId, deadLetter: true); // no DLQ: dropped (deleted)
         self::assertNull($this->client->receive($q));
-        self::assertSame([0, 1], [$this->client->getQueue($q)->stats->messages, $this->client->getQueue($q)->stats->history]);
+        self::assertSame([0, 0], [$this->client->getQueue($q)->stats->messages, $this->client->getQueue($q)->stats->history]);
     }
 
     public function testDelay(): void

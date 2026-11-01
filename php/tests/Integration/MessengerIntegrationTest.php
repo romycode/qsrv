@@ -69,7 +69,7 @@ final class MessengerIntegrationTest extends IntegrationTestCase
 
         $t->ack($got);
         self::assertSame([], self::all($t));
-        self::assertSame(1, $this->client->getQueue($q)->stats->history);
+        self::assertSame(0, $this->client->getQueue($q)->stats->history, 'ack deletes');
     }
 
     public function testWireFormatIsPlainJson(): void
@@ -176,7 +176,7 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         $t->send(new Envelope(new DummyMessage('x')));
         $t->reject(self::all($t)[0]); // Messenger already re-sent it or gave up
         self::assertSame([], self::all($t));
-        self::assertSame(1, $this->client->getQueue($q)->stats->history);
+        self::assertSame(0, $this->client->getQueue($q)->stats->history, 'reject acks: deleted');
     }
 
     public function testKeepaliveExtendsLease(): void
@@ -277,7 +277,7 @@ final class MessengerIntegrationTest extends IntegrationTestCase
         self::assertSame(['one', 'boom', 'three'], $handled);
         $stats = $this->client->getQueue($q)->stats;
         self::assertSame(0, $stats->messages, 'handled are acked, failed are rejected (= acked)');
-        self::assertSame(3, $stats->history);
+        self::assertSame(0, $stats->history, 'acked messages are deleted');
     }
 
     public function testTopicPublishAndSubscribe(): void
