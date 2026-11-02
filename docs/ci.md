@@ -11,6 +11,7 @@ to do when it fails. Files are in `.github/workflows/`.
 | [PHP](#php-phpyml) | PRs and `main`, when `php/` or the server changes | the PHP client and Messenger transport work against a real server |
 | [Docker](#docker-dockeryml) | PRs and `main` when the image's inputs change; release tags | the image builds for amd64 and arm64 and works; publishes it |
 | [Commits](#commits-commitsyml) | every PR | commit messages and the PR title follow Conventional Commits |
+| [Tidy](#tidy-tidyyml) | PRs, when Go code or `go.mod`/`go.sum` change | `go mod tidy`, committed to the PR branch: dependencies are never updated by hand |
 | [Release](#release-releaseyml) | `vX.Y.Z` tags | binaries and the GitHub release |
 | [Tag release](#tag-release-tagyml) | by hand, from the Actions tab | creates a release (server or PHP) with one click |
 | [Monitoring](#monitoring-monitoringyml) | PRs and `main`, when the alert rules, dashboards or metrics change | the alerts and Grafana dashboards work against a real qsrv |
@@ -107,6 +108,19 @@ linked statically against musl, cross-compiled without QEMU) and `qctl`, on
 
 It uses the workflow's own `GITHUB_TOKEN` to push: no secrets. A newly
 published package is private; make it public once in its GitHub settings.
+
+## Tidy (`tidy.yml`)
+
+Runs `go mod tidy` on the PR. If `go.mod` or `go.sum` change, it commits
+them to the PR branch as `build(deps): go mod tidy` and the checks run again
+on that commit (the Go run on the untidy commit is cancelled). So to add a
+dependency, import it and push: CI adds the requirement and its checksums.
+
+It pushes over SSH with a deploy key (secret `QSRV_TIDY_KEY`), because a push
+with `GITHUB_TOKEN` wouldn't trigger the checks on the new commit. Set it up
+once with `scripts/setup-ci.sh` (needs admin on the repo and the `gh` CLI).
+Without the secret, or on a PR from a fork, it fails and prints the diff to
+apply by hand. Pull before pushing again: the branch has a commit you don't.
 
 ## Commits (`commits.yml`)
 

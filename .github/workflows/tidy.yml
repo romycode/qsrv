@@ -1,0 +1,86 @@
+name: Tidy
+
+# Runs go mod tidy on pull requests and pushes the result to the PR branch
+# as a "build(deps): go mod tidy" commit, so go.mod and go.sum never need to
+# be updated by hand: add an import, push, and CI adds the requirement and
+# its checksums.
+#
+# The commit is pushed over SSH with a deploy key (secret QSRV_TIDY_KEY, set
+# up by scripts/setup-ci.sh), not with GITHUB_TOKEN: pushes made with
+# GITHUB_TOKEN don't trigger workflows, and the new commit needs the usual
+# checks (Go, Docker...) with their pull request context. The Go run on the
+# untidy commit is cancelled by the new push (same concurrency group).
+#
+# Pull requests from forks can't be pushed to: there it only fails, with the
+# diff, so the author can run go mod tidy.
+
+on:
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/tidy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tidy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tidy:
+    name: go mod tidy
+    runs-on: ubuntu-latest
+    env:
+      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      HAS_KEY: ${{ secrets.QSRV_TIDY_KEY != '' }}
+      BRANCH: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The branch itself, not the merge commit: the result is pushed to it.
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+      - name: go mod tidy
+        id: tidy
+        run: |
+          go mod tidy
+          if git diff --quiet -- go.mod go.sum; then
+            echo "go.mod and go.sum are tidy"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat -- go.mod go.sum
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Can't push here
+        if: steps.tidy.outputs.changed == 'true' && (env.SAME_REPO != 'true' || env.HAS_KEY != 'true')
+        run: |
+          git diff -- go.mod go.sum
+          if [ "$SAME_REPO" != true ]; then
+            echo "::error::go.mod/go.sum are not tidy: run go mod tidy and push (CI can't push to a fork)"
+          else
+            echo "::error::go.mod/go.sum are not tidy and secret QSRV_TIDY_KEY is not set: run scripts/setup-ci.sh once, or go mod tidy by hand"
+          fi
+          exit 1
+      - name: Commit and push
+        if: steps.tidy.outputs.changed == 'true' && env.SAME_REPO == 'true' && env.HAS_KEY == 'true'
+        env:
+          KEY: ${{ secrets.QSRV_TIDY_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/tidy && chmod 600 ~/.ssh/tidy
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tidy -o IdentitiesOnly=yes"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum
+          git commit -q -m "build(deps): go mod tidy" -m "Run by the Tidy workflow on ${GITHUB_SHA::7}."
+          # Fails (and retries on the next push) if the branch moved meanwhile.
+          git push "git@github.com:${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          echo "::notice::pushed go mod tidy to ${BRANCH}; CI runs again on that commit"
