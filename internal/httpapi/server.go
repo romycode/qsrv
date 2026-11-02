@@ -8,6 +8,11 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/romycode/qsrv/internal/queue"
 	"github.com/romycode/qsrv/pkg/api"
 )
@@ -23,12 +28,19 @@ type Options struct {
 	// Admin serves the read-only admin UI under /admin/ (see admin.go).
 	Admin   bool
 	Version string // shown in the admin UI, and busts its asset cache
+	// TracerProvider records the messaging spans (see trace.go); nil = the
+	// global one, a no-op unless tracing is set up.
+	TracerProvider trace.TracerProvider
+	// Propagator reads the trace context of requests; nil = the global one.
+	Propagator propagation.TextMapPropagator
 }
 
 type Server struct {
 	b        *queue.Broker
 	maxBody  int64
 	maxFrame int64
+	tracer   trace.Tracer
+	prop     propagation.TextMapPropagator
 }
 
 func New(b *queue.Broker, o Options) http.Handler {
@@ -37,6 +49,13 @@ func New(b *queue.Broker, o Options) http.Handler {
 	}
 	// JSON base64 inflates ~4/3; allow headroom for the envelope.
 	s := &Server{b: b, maxBody: o.MaxMessageBytes, maxFrame: o.MaxMessageBytes*4/3 + 4096}
+	if o.TracerProvider == nil {
+		o.TracerProvider = otel.GetTracerProvider()
+	}
+	if o.Propagator == nil {
+		o.Propagator = otel.GetTextMapPropagator()
+	}
+	s.tracer, s.prop = o.TracerProvider.Tracer(tracerName), o.Propagator
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/queues", s.list)
@@ -212,7 +231,15 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	m, err := q.SendWith(body, queue.SendOptions{GroupID: in.GroupID, Delay: in.Delay.D(), Attributes: in.Attributes})
+	ctx, span := s.startSpan(r, "send "+q.Name(), trace.SpanKindProducer,
+		trace.WithAttributes(msgAttrs("send", "send", q.Name())...),
+		trace.WithLinks(messageLinks(in.Attributes)...))
+	attrs := withCreationContext(ctx, in.Attributes)
+	m, err := q.SendWith(body, queue.SendOptions{GroupID: in.GroupID, Delay: in.Delay.D(), Attributes: attrs})
+	if err == nil {
+		span.SetAttributes(attribute.String("messaging.message.id", m.ID), attribute.Int("messaging.message.body.size", len(body)))
+	}
+	endSpan(span, err)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -364,7 +391,15 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	pub, err := s.b.PublishWith(topic, body, queue.SendOptions{GroupID: in.GroupID, Delay: in.Delay.D(), Attributes: in.Attributes})
+	ctx, span := s.startSpan(r, "publish "+topic, trace.SpanKindProducer,
+		trace.WithAttributes(msgAttrs("publish", "send", topic)...),
+		trace.WithLinks(messageLinks(in.Attributes)...))
+	attrs := withCreationContext(ctx, in.Attributes)
+	pub, err := s.b.PublishWith(topic, body, queue.SendOptions{GroupID: in.GroupID, Delay: in.Delay.D(), Attributes: attrs})
+	if err == nil {
+		span.SetAttributes(attribute.Int("messaging.batch.message_count", len(pub)), attribute.Int("messaging.message.body.size", len(body)))
+	}
+	endSpan(span, err)
 	if err != nil {
 		writeScopedErr(w, sc, err)
 		return
@@ -390,7 +425,20 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 		}
 		wait = min(d, MaxWait)
 	}
+	start := time.Now()
 	d, err := q.Receive(r.Context(), wait)
+	if err == nil || (!errors.Is(err, queue.ErrEmpty) && r.Context().Err() == nil) {
+		// A span only when something happened: idle long-polls leave none.
+		opts := []trace.SpanStartOption{trace.WithTimestamp(start), trace.WithAttributes(msgAttrs("receive", "receive", q.Name())...)}
+		if err == nil {
+			opts = append(opts, trace.WithLinks(messageLinks(d.Message.Attributes)...), trace.WithAttributes(
+				attribute.String("messaging.message.id", d.Message.ID),
+				attribute.Int("messaging.message.body.size", len(d.Message.Body)),
+				attribute.Int("qsrv.message.attempts", d.Message.Attempts)))
+		}
+		_, span := s.startSpan(r, "receive "+q.Name(), trace.SpanKindServer, opts...)
+		endSpan(span, err)
+	}
 	switch {
 	case errors.Is(err, queue.ErrEmpty):
 		w.WriteHeader(http.StatusNoContent)
@@ -405,7 +453,7 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ack(w http.ResponseWriter, r *http.Request) {
-	s.settle(w, r, (*queue.Queue).Ack)
+	s.settle(w, r, "ack", (*queue.Queue).Ack)
 }
 
 func (s *Server) nack(w http.ResponseWriter, r *http.Request) {
@@ -414,18 +462,21 @@ func (s *Server) nack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.DeadLetter {
-		s.settle(w, r, (*queue.Queue).DeadLetter)
+		s.settle(w, r, "dead_letter", (*queue.Queue).DeadLetter)
 		return
 	}
-	s.settle(w, r, (*queue.Queue).Nack)
+	s.settle(w, r, "nack", (*queue.Queue).Nack)
 }
 
-func (s *Server) settle(w http.ResponseWriter, r *http.Request, fn func(*queue.Queue, string) error) {
+func (s *Server) settle(w http.ResponseWriter, r *http.Request, op string, fn func(*queue.Queue, string) error) {
 	q, ok := s.queue(w, r)
 	if !ok {
 		return
 	}
-	if err := fn(q, r.PathValue("lease")); err != nil {
+	_, span := s.startSpan(r, op+" "+q.Name(), trace.SpanKindServer, trace.WithAttributes(msgAttrs(op, "settle", q.Name())...))
+	err := fn(q, r.PathValue("lease"))
+	endSpan(span, err)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -441,7 +492,9 @@ func (s *Server) extend(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 && !s.decode(w, r, &in, 4096) {
 		return
 	}
+	_, span := s.startSpan(r, "extend "+q.Name(), trace.SpanKindServer, trace.WithAttributes(msgAttrs("extend", "", q.Name())...))
 	exp, err := q.Extend(r.PathValue("lease"), in.By.D())
+	endSpan(span, err)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -474,7 +527,13 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request) {
 	if in.Until != nil {
 		req.Until = *in.Until
 	}
+	_, span := s.startSpan(r, "replay "+src, trace.SpanKindServer, trace.WithAttributes(msgAttrs("replay", "", src)...),
+		trace.WithAttributes(attribute.String("qsrv.replay.to", to)))
 	res, err := s.b.Replay(src, req)
+	if err == nil {
+		span.SetAttributes(attribute.Int("messaging.batch.message_count", res.Replayed))
+	}
+	endSpan(span, err)
 	if err != nil {
 		writeScopedErr(w, sc, err)
 		return

@@ -314,6 +314,50 @@ Alertmanager ships with commented Slack and email receivers, and with
 inhibitions: `QsrvDown` silences the rest of that instance's alerts, and a
 critical alert its own warning.
 
+## Tracing (OpenTelemetry)
+
+Off by default. Set an OTLP endpoint and qsrv exports traces over OTLP/HTTP
+with the standard variables:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318   # or ..._TRACES_ENDPOINT
+OTEL_TRACES_SAMPLER=parentbased_traceidratio OTEL_TRACES_SAMPLER_ARG=0.1  # default: parentbased_always_on
+OTEL_SERVICE_NAME=qsrv                                    # the default
+OTEL_SDK_DISABLED=true                                    # off again
+```
+
+One span per message operation, following the OpenTelemetry messaging
+conventions (still in development upstream), child of the trace context in
+the request headers:
+
+| span | kind | |
+|---|---|---|
+| `send <queue>`, `publish <topic>` | producer | `messaging.message.id`, body size; publish: copies made |
+| `receive <queue>` | server | only when a message is delivered (idle long-polls leave none); covers the wait; links to the message's creation context |
+| `ack` / `nack` / `dead_letter <queue>` | server | `messaging.operation.type=settle` |
+| `extend <queue>`, `replay <queue>` | server | replay: messages copied |
+
+Queue and topic names are the full `tenant/name`, with `qsrv.tenant` as its
+own attribute.
+
+**Across the queue.** A message carries its *creation context* in its
+`traceparent` (and `tracestate`) attributes: the producer's span when the
+producer sets it (the Go client does it from the context it's given),
+otherwise qsrv's send span. It survives retries, the DLQ, topic copies and
+replay, so a consumer, even of a replay days later, links its processing span
+to the trace that produced the message:
+
+```go
+d, _ := c.Receive(ctx, "orders", 20*time.Second)
+ctx, span := tracer.Start(ctx, "process orders",
+	trace.WithSpanKind(trace.SpanKindConsumer),
+	trace.WithLinks(trace.Link{SpanContext: client.MessageSpanContext(d.Message)}))
+defer span.End()
+```
+
+The Go client also sends the trace context of every call in the request
+headers, when the application has set an OpenTelemetry propagator.
+
 ## Performance
 
 Measure on your own hardware with `qbench` (included) against a running server:

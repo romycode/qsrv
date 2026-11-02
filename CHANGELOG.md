@@ -27,6 +27,14 @@ API or the data format (always called out here).
   server from it, or restore it with v0.1.0 and then upgrade.
 
 ### Added
+- OpenTelemetry tracing, off by default: with `OTEL_EXPORTER_OTLP_ENDPOINT`
+  set, qsrv exports a span per message operation (send, publish, receive,
+  ack/nack, extend, replay) over OTLP/HTTP, following the messaging
+  conventions. Messages carry their creation context in the `traceparent`
+  attribute (the producer's, or qsrv's send span), so consumers can link to
+  the producing trace, also after retries, dead-lettering and replay. The Go
+  client propagates the caller's trace context in headers and messages;
+  `client.MessageSpanContext` reads it on the consumer side.
 - Message **attributes**: up to 16 string key/values (4 KiB) sent with a
   message (`attributes` in send and publish, `qctl send -attr K=V`, Go
   `SendOptions.Attributes`) and returned by receive and peek. Kept through

@@ -14,6 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/romycode/qsrv/pkg/api"
 )
 
@@ -151,7 +155,7 @@ type SendOptions struct {
 func (c *Client) SendWith(ctx context.Context, queue string, body []byte, o SendOptions) (api.Message, error) {
 	text, raw := api.EncodeBody(body)
 	var out api.Message
-	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay), Attributes: o.Attributes}
+	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay), Attributes: withTraceContext(ctx, o.Attributes)}
 	err := c.do(ctx, http.MethodPost, qpath(queue, "/messages"), in, &out)
 	return out, err
 }
@@ -249,7 +253,7 @@ func (c *Client) Unsubscribe(ctx context.Context, topic, queue string) (api.Topi
 func (c *Client) Publish(ctx context.Context, topic string, body []byte, o SendOptions) ([]api.PublishedMessage, error) {
 	text, raw := api.EncodeBody(body)
 	var out api.PublishResponse
-	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay), Attributes: o.Attributes}
+	in := api.SendRequest{Body: text, BodyBase64: raw, GroupID: o.GroupID, Delay: api.Duration(o.Delay), Attributes: withTraceContext(ctx, o.Attributes)}
 	err := c.do(ctx, http.MethodPost, tpath(topic, "/messages"), in, &out)
 	return out.Messages, err
 }
@@ -279,6 +283,9 @@ func (c *Client) doFound(ctx context.Context, method, path string, in, out any, 
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
+	// The caller's trace context, so qsrv's spans join its trace (a no-op
+	// unless the application set up an OpenTelemetry propagator).
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return err
@@ -301,4 +308,33 @@ func (c *Client) doFound(ctx context.Context, method, path string, in, out any, 
 		*found = true
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// withTraceContext returns attrs with the span context of ctx (W3C
+// traceparent and tracestate) as the message's creation context, so whoever
+// receives it can link back to the producer. Attributes that already carry
+// a traceparent are kept as they are, and so is everything when ctx has no
+// span (OpenTelemetry not in use).
+func withTraceContext(ctx context.Context, attrs map[string]string) map[string]string {
+	if attrs["traceparent"] != "" || !trace.SpanContextFromContext(ctx).IsValid() {
+		return attrs
+	}
+	out := make(map[string]string, len(attrs)+2)
+	for k, v := range attrs {
+		out[k] = v
+	}
+	propagation.TraceContext{}.Inject(ctx, propagation.MapCarrier(out))
+	return out
+}
+
+// MessageSpanContext is the creation context of a message: the span that
+// produced it (or qsrv's send span), from its traceparent attribute. Invalid
+// when the message has none. Link the span that processes the message to it:
+//
+//	ctx, span := tracer.Start(ctx, "process orders",
+//		trace.WithSpanKind(trace.SpanKindConsumer),
+//		trace.WithLinks(trace.Link{SpanContext: client.MessageSpanContext(d.Message)}))
+func MessageSpanContext(m api.Message) trace.SpanContext {
+	ctx := propagation.TraceContext{}.Extract(context.Background(), propagation.MapCarrier(m.Attributes))
+	return trace.SpanContextFromContext(ctx)
 }

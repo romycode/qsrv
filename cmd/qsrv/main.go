@@ -20,6 +20,7 @@ import (
 	"github.com/romycode/qsrv/internal/httpapi"
 	"github.com/romycode/qsrv/internal/obs"
 	"github.com/romycode/qsrv/internal/queue"
+	"github.com/romycode/qsrv/internal/tracing"
 )
 
 // version is set at build time: -ldflags "-X main.version=1.2.3"
@@ -107,6 +108,18 @@ func run() error {
 		return err
 	}
 	defer lock.Close()
+
+	shutdownTracing, err := tracing.Setup(context.Background(), version)
+	if err != nil {
+		return fmt.Errorf("opentelemetry: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(ctx); err != nil {
+			slog.Warn("opentelemetry shutdown", "err", err)
+		}
+	}()
 
 	o := obs.New()
 	broker, err := queue.Open(*dataDir, queue.Options{
